@@ -1,0 +1,98 @@
+menu "ESP W5500 TOE Component"
+
+    config W5500_TOE_SPI_HOST
+        int "SPI host number (SPI2_HOST=1, SPI3_HOST=2)"
+        range 1 2
+        default 1
+        help
+            SPI peripheral to use for W5500.
+            1 = SPI2_HOST (HSPI), 2 = SPI3_HOST (VSPI).
+
+    config W5500_TOE_SPI_CLOCK_MHZ
+        int "SPI clock speed (MHz)"
+        range 1 80
+        default 40
+        help
+            SPI clock frequency in MHz for W5500 communication.
+            Maximum supported by W5500 is 80 MHz.
+
+    config W5500_TOE_PIN_MOSI
+        int "SPI MOSI GPIO"
+        range 0 48
+        default 11
+        help
+            GPIO number for SPI MOSI.
+
+    config W5500_TOE_PIN_MISO
+        int "SPI MISO GPIO"
+        range 0 48
+        default 13
+        help
+            GPIO number for SPI MISO.
+
+    config W5500_TOE_PIN_SCLK
+        int "SPI SCLK GPIO"
+        range 0 48
+        default 12
+        help
+            GPIO number for SPI clock.
+
+    config W5500_TOE_PIN_CS
+        int "SPI CS GPIO"
+        range 0 48
+        default 10
+        help
+            GPIO number for SPI chip select (active low).
+
+    config W5500_TOE_PIN_RST
+        int "W5500 RESET GPIO (-1 to disable)"
+        range -1 48
+        default 9
+        help
+            GPIO number for W5500 hardware reset.
+            Set to -1 if the reset pin is not connected.
+
+    config W5500_TOE_PIN_INT
+        int "W5500 INT GPIO (-1 to disable)"
+        range -1 48
+        default 8
+        help
+            GPIO number for W5500 interrupt output.
+            Set to -1 if interrupt-driven operation is not used.
+
+    config W5500_TOE_MAX_SOCKETS
+        int "Maximum number of simultaneous TOE sockets"
+        range 1 8
+        default 4
+        help
+            Number of W5500 hardware sockets to manage.
+            W5500 supports up to 8 hardware sockets.
+
+    config W5500_TOE_SOCKET_TX_BUF_KB
+        int "TX buffer size per socket (KB, power of 2)"
+        range 1 16
+        default 2
+        help
+            TX buffer size allocated per hardware socket.
+            Valid values: 1, 2, 4, 8, 16 KB.
+            Sum across all sockets must not exceed 16 KB.
+
+    config W5500_TOE_SOCKET_RX_BUF_KB
+        int "RX buffer size per socket (KB, power of 2)"
+        range 1 16
+        default 2
+        help
+            RX buffer size allocated per hardware socket.
+            Valid values: 1, 2, 4, 8, 16 KB.
+            Sum across all sockets must not exceed 16 KB.
+
+    config W5500_TOE_LOG_LEVEL
+        int "Log verbosity level (0=None … 5=Verbose)"
+        range 0 5
+        default 3
+        help
+            Controls the amount of debug output from esp_w5500_toe.
+            Mirrors ESP_LOG levels: 0=None, 1=Error, 2=Warn,
+            3=Info, 4=Debug, 5=Verbose.
+
+endmenu
