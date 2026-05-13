@@ -1,16 +1,11 @@
-## IDF Component Manager manifest
-## https://docs.espressif.com/projects/idf-component-manager/
-
-version: "0.1.0"
-
-description: >
-  W5500 TOE (TCP/IP Offload Engine) component for ESP32-S3.
-  Uses WIZnet ioLibrary directly — NOT based on esp_eth MAC RAW or lwIP netif.
-
-url: "https://github.com/your-org/esp_w5500_toe"
-
+name: esp_wiz_toe
+version: "0.1.0-alpha.1"
+description: "ESP-IDF W5500 TOE component for ESP32-S3 using WIZnet ioLibrary (TCP/UDP/DHCP/DNS)"
+license: "MIT"
+repository: "https://github.com/your-org/esp_wiz_toe"
+url: "https://github.com/your-org/esp_wiz_toe"
 targets:
   - esp32s3
-
 dependencies:
-  idf: ">=5.4.0"
+  idf:
+    version: ">=5.4.0,<5.5.0"

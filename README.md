@@ -1,169 +1,157 @@
-# esp_w5500_toe
+# esp_wiz_toe
 
-ESP-IDF v5.4.x component for the WIZnet W5500 using its built-in **TCP/IP Offload Engine (TOE)**.
+ESP-IDF component for ESP32-S3 that controls WIZnet W5500 in TOE mode (socket offload) using WIZnet ioLibrary.
 
----
+## Overview
+
+`esp_wiz_toe` provides a thin, blocking-first wrapper over W5500 hardware sockets.
+The component directly controls W5500 through SPI and ioLibrary callback binding.
+
+## Supported chip
+
+- ESP32-S3
+
+## Supported WIZnet chip
+
+- W5500
+
+## Supported features
+
+- TCP client
+- TCP server (listen + accept wait)
+- UDP send/recv
+- DHCP (ioLibrary `Internet/DHCP`)
+- DNS resolve (ioLibrary `Internet/DNS`)
+
+## Unsupported features
+
+- TLS/SSL offload or TLS wrapper
+- lwIP socket compatibility layer
+- `esp_eth` integration mode
+- MAC RAW mode
 
 ## Architecture
 
-```
+```text
 Application
-    │
-    ▼
-esp_w5500_toe API  ←──  ioLibrary socket() / send() / recv()
-    │                   (W5500 hardware TCP/IP – Sn_MR_TCP / Sn_MR_UDP)
-    ▼
-esp_w5500_toe_spi  ──►  ESP32-S3 SPI master (driver/spi_master.h)
-    │
-    ▼
-W5500 chip  (SPI)
+    -> esp_wiz_toe public API
+        -> socket/net thin wrappers
+            -> ioLibrary (Ethernet + Internet)
+                -> W5500 SPI callback layer
+                    -> ESP-IDF SPI Master driver
 ```
 
-### What this component is NOT
+Key source files:
 
-| What you might expect          | What this component does instead                       |
-|-------------------------------|--------------------------------------------------------|
-| `esp_eth` MAC RAW driver       | **Not used.** W5500 is driven directly via SPI.        |
-| lwIP `netif` / `esp_netif`     | **Not used.** TCP/IP runs entirely inside W5500.       |
-| Host-side TCP/IP stack         | **Not used.** All socket state lives in W5500 hardware.|
-| DHCP client (esp-idf/lwIP)     | **Not used.** Static IP only (DHCP reserved for future).|
+- `src/esp_wiz_toe.c`: lifecycle, reset/init, netinfo setup
+- `src/esp_wiz_toe_spi.c`: SPI transport and ioLibrary callback bridge
+- `src/esp_wiz_toe_socket.c`: TCP/UDP thin wrappers
+- `src/esp_wiz_toe_net.c`: DHCP/DNS blocking helpers
 
-The W5500 contains its own hardwired TCP/IP stack with 8 independent hardware
-socket channels.  Each socket channel handles its own TCP state machine,
-retransmission, checksum generation, etc. autonomously.  The ESP32-S3 only
-needs to read/write payload data over SPI.
+## Difference from esp_eth
 
----
+- `esp_eth` typically integrates with ESP-IDF networking pipeline and can use MAC/PHY abstractions.
+- `esp_wiz_toe` does not create or use `esp_eth` objects.
+- W5500 socket engine is controlled directly through ioLibrary + SPI callbacks.
 
-## ioLibrary dependency
+## Relationship with lwIP
 
-The [WIZnet ioLibrary_Driver](https://github.com/Wiznet/ioLibrary_Driver) is
-included as a git submodule:
+- This component does not create `esp_netif` instances.
+- This component does not use lwIP DHCP/DNS/socket APIs.
+- Networking APIs are W5500/ioLibrary driven.
 
-```
-third_party/ioLibrary_Driver/
-```
+## ioLibrary submodule initialization
 
-After cloning, run:
+`ioLibrary_Driver` is expected under `third_party/ioLibrary_Driver`.
 
 ```bash
+git submodule add https://github.com/Wiznet/ioLibrary_Driver.git third_party/ioLibrary_Driver
 git submodule update --init --recursive
 ```
 
-Only the following ioLibrary sources are compiled:
+## Usage
 
-| File                                   | Purpose                           |
-|----------------------------------------|-----------------------------------|
-| `Ethernet/W5500/w5500.c`               | W5500 register-level driver       |
-| `Ethernet/socket.c`                    | Hardware socket API               |
-| `Ethernet/wizchip_conf.c`              | Chip config / callback glue       |
+Minimal flow:
 
----
+1. Fill `esp_wiz_toe_config_t`
+2. Call `esp_wiz_toe_init()`
+3. Optional DHCP: `esp_wiz_toe_dhcp_start()`
+4. Use TCP/UDP APIs
+5. Call `esp_wiz_toe_deinit()`
 
-## Target
+Example API groups:
 
-| Item          | Value              |
-|---------------|--------------------|
-| SoC           | ESP32-S3           |
-| IDF version   | ≥ 5.4.0            |
-| W5500 interface | SPI (full-duplex) |
-| Max sockets   | 8 (configurable via Kconfig) |
+- Lifecycle: `esp_wiz_toe_init`, `esp_wiz_toe_deinit`, `esp_wiz_toe_reset`
+- Link: `esp_wiz_toe_is_link_up`, `esp_wiz_toe_get_link_status`
+- TCP: `esp_wiz_toe_tcp_connect`, `esp_wiz_toe_tcp_listen`, `esp_wiz_toe_tcp_accept_wait`, `esp_wiz_toe_send`, `esp_wiz_toe_recv`, `esp_wiz_toe_close`
+- UDP: `esp_wiz_toe_udp_open`, `esp_wiz_toe_udp_sendto`, `esp_wiz_toe_udp_recvfrom`, `esp_wiz_toe_close`
+- DHCP/DNS: `esp_wiz_toe_dhcp_start`, `esp_wiz_toe_dhcp_stop`, `esp_wiz_toe_dns_resolve`
 
----
+## menuconfig options
 
-## Quick start
+`Component config -> WIZnet TOE Component`
 
-```c
-#include "esp_w5500_toe.h"
+- `ESP_WIZ_TOE_ENABLED`
+- `ESP_WIZ_TOE_SPI_HOST`
+- `ESP_WIZ_TOE_SPI_CLOCK_HZ`
+- `ESP_WIZ_TOE_PIN_MISO`
+- `ESP_WIZ_TOE_PIN_MOSI`
+- `ESP_WIZ_TOE_PIN_SCLK`
+- `ESP_WIZ_TOE_PIN_CS`
+- `ESP_WIZ_TOE_PIN_RST`
+- `ESP_WIZ_TOE_PIN_INT`
+- `ESP_WIZ_TOE_RX_BUF_KB`
+- `ESP_WIZ_TOE_TX_BUF_KB`
 
-void app_main(void)
-{
-    esp_w5500_toe_config_t cfg = {
-        .spi = {
-            .spi_host       = SPI2_HOST,
-            .pin_mosi       = 11,
-            .pin_miso       = 13,
-            .pin_sclk       = 12,
-            .pin_cs         = 10,
-            .pin_rst        = 9,
-            .pin_int        = 8,
-            .clock_speed_mhz = 40,
-        },
-        .net = {
-            .mac     = {0x00, 0x08, 0xDC, 0x01, 0x02, 0x03},
-            .ip      = {192, 168, 1, 100},
-            .subnet  = {255, 255, 255, 0},
-            .gateway = {192, 168, 1, 1},
-            .dns     = {8, 8, 8, 8},
-        },
-    };
+## Running examples
 
-    ESP_ERROR_CHECK(esp_w5500_toe_init(&cfg));
+Available examples:
 
-    /* Open TCP socket on hardware socket 0, local port 5000 */
-    ESP_ERROR_CHECK(esp_w5500_toe_tcp_open(0, 5000));
+- `examples/tcp_client`
+- `examples/tcp_server`
+- `examples/udp_echo`
 
-    uint8_t server_ip[] = {192, 168, 1, 10};
-    ESP_ERROR_CHECK(esp_w5500_toe_tcp_connect(0, server_ip, 8080));
+Example build/run:
 
-    /* Now call ioLibrary send()/recv() directly on socket 0 */
-}
+```bash
+cd examples/tcp_client
+idf.py set-target esp32s3
+idf.py build
+idf.py -p <PORT> flash monitor
 ```
 
----
+Netcat quick tests:
 
-## Adding to your project
+- TCP client target server on PC: `nc -l 5000`
+- TCP server test from PC: `nc <ESP_IP> 5000`
+- UDP test on PC: `nc -u -l 5001`
 
-In your project `CMakeLists.txt`:
+## Concurrency policy
 
-```cmake
-set(EXTRA_COMPONENT_DIRS path/to/esp_w5500_toe)
-```
+- MVP uses one global recursive mutex for socket/net operations.
+- This keeps implementation simple and safe for multi-task access.
+- Future plan is per-socket locking via socket manager.
 
-Or add it as an IDF component inside the `components/` folder of your project.
+## Timeout policy
 
----
+- APIs are blocking-first with polling loops.
+- `timeout_ms` controls polling deadline.
+- `UINT32_MAX` means wait forever.
+- On timeout, APIs return `ESP_ERR_TIMEOUT`.
 
-## Kconfig options
+## License notes
 
-All options live under `Component config → ESP W5500 TOE Component`:
+- This component is MIT licensed (see `idf_component.yml` / repository license file).
+- `ioLibrary_Driver` is a third-party dependency with its own license terms.
+- Verify third-party license compatibility before distribution.
 
-| Symbol                            | Default | Description                         |
-|-----------------------------------|---------|-------------------------------------|
-| `W5500_TOE_SPI_HOST`              | 1       | SPI host (1=SPI2, 2=SPI3)           |
-| `W5500_TOE_SPI_CLOCK_MHZ`         | 40      | SPI clock in MHz                    |
-| `W5500_TOE_PIN_MOSI/MISO/SCLK/CS` | —       | GPIO assignments                    |
-| `W5500_TOE_PIN_RST`               | 9       | Reset GPIO (-1 to disable)          |
-| `W5500_TOE_PIN_INT`               | 8       | Interrupt GPIO (-1 to disable)      |
-| `W5500_TOE_MAX_SOCKETS`           | 4       | Number of hardware sockets in use   |
-| `W5500_TOE_SOCKET_TX_BUF_KB`      | 2       | TX buffer per socket (KB)           |
-| `W5500_TOE_SOCKET_RX_BUF_KB`      | 2       | RX buffer per socket (KB)           |
+## Component Registry pre-publish checklist
 
----
-
-## File layout
-
-```
-esp_w5500_toe/
-├── CMakeLists.txt
-├── idf_component.yml
-├── Kconfig
-├── README.md
-├── include/
-│   └── esp_w5500_toe.h          # Public API
-├── src/
-│   ├── esp_w5500_toe.c          # Lifecycle: init / deinit
-│   ├── esp_w5500_toe_spi.c      # SPI master + ioLibrary SPI callbacks
-│   ├── esp_w5500_toe_spi.h      # (internal)
-│   ├── esp_w5500_toe_socket.c   # Socket open / connect / close helpers
-│   └── esp_w5500_toe_socket.h   # (internal)
-└── third_party/
-    └── ioLibrary_Driver/        # git submodule
-```
-
----
-
-## License
-
-MIT – see `LICENSE` file.  
-WIZnet ioLibrary_Driver is licensed separately under its own MIT-style license.
+- Set final `version` in `idf_component.yml`
+- Set real `repository` URL in `idf_component.yml`
+- Ensure `name` is unique/available in Espressif Component Registry
+- Confirm `targets`, `license`, and `dependencies` are correct
+- Verify examples build for ESP32-S3
+- Verify submodule initialization instructions are accurate
+- Run static checks and resolve warnings
+- Tag release and publish release notes/changelog

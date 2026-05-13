@@ -1,98 +1,56 @@
-menu "ESP W5500 TOE Component"
+menu "WIZnet TOE Component"
 
-    config W5500_TOE_SPI_HOST
-        int "SPI host number (SPI2_HOST=1, SPI3_HOST=2)"
-        range 1 2
-        default 1
-        help
-            SPI peripheral to use for W5500.
-            1 = SPI2_HOST (HSPI), 2 = SPI3_HOST (VSPI).
+config ESP_WIZ_TOE_ENABLED
+    bool "Enable esp_wiz_toe"
+    default y
+    depends on IDF_TARGET_ESP32S3
 
-    config W5500_TOE_SPI_CLOCK_MHZ
-        int "SPI clock speed (MHz)"
-        range 1 80
-        default 40
-        help
-            SPI clock frequency in MHz for W5500 communication.
-            Maximum supported by W5500 is 80 MHz.
+if ESP_WIZ_TOE_ENABLED
 
-    config W5500_TOE_PIN_MOSI
-        int "SPI MOSI GPIO"
-        range 0 48
-        default 11
-        help
-            GPIO number for SPI MOSI.
+config ESP_WIZ_TOE_SPI_HOST
+    int "SPI host (2=SPI2, 3=SPI3)"
+    range 2 3
+    default 2
 
-    config W5500_TOE_PIN_MISO
-        int "SPI MISO GPIO"
-        range 0 48
-        default 13
-        help
-            GPIO number for SPI MISO.
+config ESP_WIZ_TOE_SPI_CLOCK_HZ
+    int "SPI clock (Hz)"
+    range 1000000 80000000
+    default 20000000
 
-    config W5500_TOE_PIN_SCLK
-        int "SPI SCLK GPIO"
-        range 0 48
-        default 12
-        help
-            GPIO number for SPI clock.
+config ESP_WIZ_TOE_PIN_MISO
+    int "GPIO: MISO"
+    default 13
 
-    config W5500_TOE_PIN_CS
-        int "SPI CS GPIO"
-        range 0 48
-        default 10
-        help
-            GPIO number for SPI chip select (active low).
+config ESP_WIZ_TOE_PIN_MOSI
+    int "GPIO: MOSI"
+    default 11
 
-    config W5500_TOE_PIN_RST
-        int "W5500 RESET GPIO (-1 to disable)"
-        range -1 48
-        default 9
-        help
-            GPIO number for W5500 hardware reset.
-            Set to -1 if the reset pin is not connected.
+config ESP_WIZ_TOE_PIN_SCLK
+    int "GPIO: SCLK"
+    default 12
 
-    config W5500_TOE_PIN_INT
-        int "W5500 INT GPIO (-1 to disable)"
-        range -1 48
-        default 8
-        help
-            GPIO number for W5500 interrupt output.
-            Set to -1 if interrupt-driven operation is not used.
+config ESP_WIZ_TOE_PIN_CS
+    int "GPIO: CS"
+    default 10
 
-    config W5500_TOE_MAX_SOCKETS
-        int "Maximum number of simultaneous TOE sockets"
-        range 1 8
-        default 4
-        help
-            Number of W5500 hardware sockets to manage.
-            W5500 supports up to 8 hardware sockets.
+config ESP_WIZ_TOE_PIN_RST
+    int "GPIO: RESET"
+    default 9
 
-    config W5500_TOE_SOCKET_TX_BUF_KB
-        int "TX buffer size per socket (KB, power of 2)"
-        range 1 16
-        default 2
-        help
-            TX buffer size allocated per hardware socket.
-            Valid values: 1, 2, 4, 8, 16 KB.
-            Sum across all sockets must not exceed 16 KB.
+config ESP_WIZ_TOE_PIN_INT
+    int "GPIO: INT"
+    default 14
 
-    config W5500_TOE_SOCKET_RX_BUF_KB
-        int "RX buffer size per socket (KB, power of 2)"
-        range 1 16
-        default 2
-        help
-            RX buffer size allocated per hardware socket.
-            Valid values: 1, 2, 4, 8, 16 KB.
-            Sum across all sockets must not exceed 16 KB.
+config ESP_WIZ_TOE_RX_BUF_KB
+    int "Per-socket RX buffer size (KB)"
+    range 1 16
+    default 2
 
-    config W5500_TOE_LOG_LEVEL
-        int "Log verbosity level (0=None … 5=Verbose)"
-        range 0 5
-        default 3
-        help
-            Controls the amount of debug output from esp_w5500_toe.
-            Mirrors ESP_LOG levels: 0=None, 1=Error, 2=Warn,
-            3=Info, 4=Debug, 5=Verbose.
+config ESP_WIZ_TOE_TX_BUF_KB
+    int "Per-socket TX buffer size (KB)"
+    range 1 16
+    default 2
+
+endif
 
 endmenu

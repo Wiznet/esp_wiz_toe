@@ -1,0 +1,2 @@
+source D:/ESP32/esp_wiz_toe/examples/udp_echo/build/bootloader/gdbinit/symbols
+source D:/ESP32/esp_wiz_toe/examples/udp_echo/build/bootloader/gdbinit/connect

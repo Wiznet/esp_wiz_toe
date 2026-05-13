@@ -1,37 +1,39 @@
-cmake_minimum_required(VERSION 3.16)
-
-# ioLibrary_Driver submodule root
-set(IOLIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ioLibrary_Driver")
-
-# ioLibrary source files required for W5500 TOE direct socket usage
-set(IOLIB_SRCS
-    "${IOLIB_DIR}/Ethernet/W5500/w5500.c"
-    "${IOLIB_DIR}/Ethernet/socket.c"
-    "${IOLIB_DIR}/Ethernet/wizchip_conf.c"
-)
-
-# Component sources
-set(COMPONENT_SRCS
-    "src/esp_w5500_toe.c"
-    "src/esp_w5500_toe_spi.c"
-    "src/esp_w5500_toe_socket.c"
-    ${IOLIB_SRCS}
-)
-
-set(COMPONENT_INCLUDE_DIRS
-    "include"
-    "${IOLIB_DIR}/Ethernet"
-    "${IOLIB_DIR}/Ethernet/W5500"
-)
-
 idf_component_register(
-    SRCS          ${COMPONENT_SRCS}
-    INCLUDE_DIRS  ${COMPONENT_INCLUDE_DIRS}
-    REQUIRES      driver freertos esp_log
+    SRCS
+        "src/esp_wiz_toe.c"
+        "src/esp_wiz_toe_port.c"
+        "src/esp_wiz_toe_spi.c"
+        "src/esp_wiz_toe_socket.c"
+        "src/esp_wiz_toe_net.c"
+    INCLUDE_DIRS
+        "include"
+    PRIV_INCLUDE_DIRS
+        "src"
+    REQUIRES
+        driver
 )
 
-# Suppress ioLibrary warnings that are not relevant to our build
-target_compile_options(${COMPONENT_LIB} PRIVATE
-    -Wno-unused-variable
-    -Wno-unused-function
-)
+target_compile_features(${COMPONENT_LIB} PUBLIC c_std_11)
+target_compile_definitions(${COMPONENT_LIB} PRIVATE WIZNET_TOE_W5500=1)
+
+set(WIZNET_IOLIB_PATH "${COMPONENT_DIR}/third_party/ioLibrary_Driver")
+
+if(EXISTS "${WIZNET_IOLIB_PATH}/Ethernet/socket.c")
+    target_include_directories(${COMPONENT_LIB} PRIVATE
+        "${WIZNET_IOLIB_PATH}/Ethernet"
+        "${WIZNET_IOLIB_PATH}/Ethernet/W5500"
+        "${WIZNET_IOLIB_PATH}/Internet"
+        "${WIZNET_IOLIB_PATH}/Internet/DHCP"
+        "${WIZNET_IOLIB_PATH}/Internet/DNS"
+    )
+
+    target_sources(${COMPONENT_LIB} PRIVATE
+        "${WIZNET_IOLIB_PATH}/Ethernet/socket.c"
+        "${WIZNET_IOLIB_PATH}/Ethernet/wizchip_conf.c"
+        "${WIZNET_IOLIB_PATH}/Ethernet/W5500/w5500.c"
+        "${WIZNET_IOLIB_PATH}/Internet/DHCP/dhcp.c"
+        "${WIZNET_IOLIB_PATH}/Internet/DNS/dns.c"
+    )
+else()
+    message(STATUS "ioLibrary_Driver submodule not found yet at ${WIZNET_IOLIB_PATH}")
+endif()
