@@ -1,0 +1,26 @@
+# VCS metadata
+.git/
+
+# Build artifacts
+build/
+**/build/
+
+# Example local build logs and locks
+**/build_check.log
+**/build_result.log
+**/build_exit.txt
+**/sdkconfig
+**/sdkconfig.old
+**/dependencies.lock
+
+# Third-party files not needed for component packaging
+third_party/ioLibrary_Driver/.git
+third_party/ioLibrary_Driver/**/*.chm
+third_party/ioLibrary_Driver/Internet/MQTT/**/*
+third_party/ioLibrary_Driver/Internet/SNMP/**/*
+third_party/ioLibrary_Driver/Internet/SNTP/**/*
+third_party/ioLibrary_Driver/Internet/TFTP/**/*
+third_party/ioLibrary_Driver/Internet/httpServer/**/*
+
+# Local temporary files
+*.log

@@ -1,6 +1,6 @@
 # TCP Server Example
 
-This example starts a TCP server, waits for a client, receives data, echoes it back, and continues listening in a loop.
+This example initializes the SPI port layer, configures W5500 through ioLibrary, and runs TCP server loopback using `loopback_tcps`.
 
 ## Build
 
@@ -9,15 +9,12 @@ idf.py set-target esp32s3
 idf.py build
 ```
 
-## Network configuration
+## Configuration
 
-Edit `main/main.c`:
-
-- `EXAMPLE_USE_DHCP`: `1` for DHCP, `0` for static IP
-- Static values: `EXAMPLE_STATIC_IP`, `EXAMPLE_STATIC_NETMASK`, `EXAMPLE_STATIC_GATEWAY`, `EXAMPLE_STATIC_DNS`
-- Listen port: `EXAMPLE_LISTEN_PORT`
-
-The project uses the local component path via `EXTRA_COMPONENT_DIRS ../../`.
+- Listen port is configured in `main/main.c`:
+  - `EXAMPLE_LISTEN_PORT`
+- SPI host/clock/pins come from:
+  - `Component config -> WIZnet TOE Component`
 
 ## Run
 
@@ -33,14 +30,4 @@ On PC (client side):
 nc <ESP_IP> 5000
 ```
 
-Type text and press Enter. The server echoes the same payload.
-
-Expected behavior:
-
-1. ESP initializes W5500 TOE
-2. DHCP or static IP is applied
-3. TCP listen starts
-4. Client connection is accepted
-5. Data is received
-6. Data is echoed
-7. On disconnect/error, socket closes and server keeps listening
+Type text and press Enter. The server loopback handler echoes payload.

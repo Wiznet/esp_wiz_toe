@@ -1,0 +1,16 @@
+# Build artifacts
+/build/
+**/build/
+/dist/
+**/dist/
+
+# ESP-IDF local config/lock files
+**/sdkconfig
+**/sdkconfig.old
+**/dependencies.lock
+
+# Local logs
+**/build_check.log
+**/build_result.log
+**/build_exit.txt
+*.log

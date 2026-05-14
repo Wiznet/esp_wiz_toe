@@ -2,138 +2,125 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "esp_err.h"
 #include "esp_log.h"
 #include "esp_wiz_toe.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "wizchip_conf.h"
+#include "Application/loopback/loopback.h"
 
-#define EXAMPLE_USE_DHCP           1
-#define EXAMPLE_SOCKET_NUM         0
-#define EXAMPLE_LISTEN_PORT        5000
-#define EXAMPLE_ACCEPT_TIMEOUT_MS  10000
-#define EXAMPLE_IO_TIMEOUT_MS      10000
+#define EXAMPLE_SOCKET_NUM 0
+#define EXAMPLE_ACCEPT_TIMEOUT_MS 10000
+#define EXAMPLE_LOOPBACK_BUF_SIZE (1024 * 2)
 
-static const char *TAG = "tcp_server_example";
-#if !EXAMPLE_USE_DHCP
-static const uint8_t EXAMPLE_STATIC_IP[4] = {192, 168, 1, 60};
-static const uint8_t EXAMPLE_STATIC_NETMASK[4] = {255, 255, 255, 0};
-static const uint8_t EXAMPLE_STATIC_GATEWAY[4] = {192, 168, 1, 1};
-static const uint8_t EXAMPLE_STATIC_DNS[4] = {8, 8, 8, 8};
+#ifdef CONFIG_ESP_WIZ_TOE_TX_BUF_KB
+#define EXAMPLE_TX_BUF_KB CONFIG_ESP_WIZ_TOE_TX_BUF_KB
+#else
+#define EXAMPLE_TX_BUF_KB 2
 #endif
 
-static void fill_default_config(esp_wiz_toe_config_t *cfg)
+#ifdef CONFIG_ESP_WIZ_TOE_RX_BUF_KB
+#define EXAMPLE_RX_BUF_KB CONFIG_ESP_WIZ_TOE_RX_BUF_KB
+#else
+#define EXAMPLE_RX_BUF_KB 2
+#endif
+
+static const char *TAG = "tcp_server_example";
+static const uint16_t EXAMPLE_LISTEN_PORT = 5000;
+
+// Keep large networking buffers out of task stack.
+static esp_wiz_toe_spi_config_t s_spi_cfg;
+static uint8_t s_tx_buf[8];
+static uint8_t s_rx_buf[8];
+static uint8_t s_loopback_buf[EXAMPLE_LOOPBACK_BUF_SIZE];
+static bool s_link_up = false;
+static bool s_link_was_up = false;
+
+static const wiz_NetInfo s_net_info = {
+    .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56},
+    .ip = {192, 168, 11, 2},
+    .sn = {255, 255, 255, 0},
+    .gw = {192, 168, 11, 1},
+    .dns = {8, 8, 8, 8},
+    .dhcp = NETINFO_STATIC,
+};
+
+static void fill_spi_config(esp_wiz_toe_spi_config_t *cfg)
 {
     memset(cfg, 0, sizeof(*cfg));
 
-    cfg->spi.host_id = SPI2_HOST;
-    cfg->spi.clock_hz = 20 * 1000 * 1000;
-    cfg->spi.pin_miso = -1;
-    cfg->spi.pin_mosi = -1;
-    cfg->spi.pin_sclk = -1;
-    cfg->spi.pin_cs = -1;
-    cfg->spi.pin_int = -1;
-    cfg->spi.pin_rst = -1;
-
-    cfg->mac.mac[0] = 0x02;
-    cfg->mac.mac[1] = 0x00;
-    cfg->mac.mac[2] = 0x00;
-    cfg->mac.mac[3] = 0x00;
-    cfg->mac.mac[4] = 0x55;
-    cfg->mac.mac[5] = 0x02;
-
-#if EXAMPLE_USE_DHCP
-    cfg->ip_mode = ESP_WIZ_TOE_IP_MODE_DHCP;
-#else
-    cfg->ip_mode = ESP_WIZ_TOE_IP_MODE_STATIC;
-    memcpy(cfg->static_ip.ip, EXAMPLE_STATIC_IP, sizeof(cfg->static_ip.ip));
-    memcpy(cfg->static_ip.netmask, EXAMPLE_STATIC_NETMASK, sizeof(cfg->static_ip.netmask));
-    memcpy(cfg->static_ip.gateway, EXAMPLE_STATIC_GATEWAY, sizeof(cfg->static_ip.gateway));
-    memcpy(cfg->static_ip.dns, EXAMPLE_STATIC_DNS, sizeof(cfg->static_ip.dns));
-#endif
-
-    cfg->timeout.connect_timeout_ms = EXAMPLE_ACCEPT_TIMEOUT_MS;
-    cfg->timeout.send_timeout_ms = EXAMPLE_IO_TIMEOUT_MS;
-    cfg->timeout.recv_timeout_ms = EXAMPLE_IO_TIMEOUT_MS;
+    cfg->host_id = (spi_host_device_t)CONFIG_ESP_WIZ_TOE_SPI_HOST;
+    cfg->clock_hz = CONFIG_ESP_WIZ_TOE_SPI_CLOCK_HZ;
+    cfg->pin_miso = (gpio_num_t)CONFIG_ESP_WIZ_TOE_PIN_MISO;
+    cfg->pin_mosi = (gpio_num_t)CONFIG_ESP_WIZ_TOE_PIN_MOSI;
+    cfg->pin_sclk = (gpio_num_t)CONFIG_ESP_WIZ_TOE_PIN_SCLK;
+    cfg->pin_cs = (gpio_num_t)CONFIG_ESP_WIZ_TOE_PIN_CS;
+    cfg->pin_int = (gpio_num_t)CONFIG_ESP_WIZ_TOE_PIN_INT;
+    cfg->pin_rst = (gpio_num_t)CONFIG_ESP_WIZ_TOE_PIN_RST;
+    cfg->lock_timeout_ms = EXAMPLE_ACCEPT_TIMEOUT_MS;
 }
 
-static void tcp_server_task(void *arg)
+static void app_task(void *arg)
 {
     (void)arg;
 
-    esp_wiz_toe_config_t cfg;
-    fill_default_config(&cfg);
+    s_tx_buf[0] = EXAMPLE_TX_BUF_KB;
+    s_tx_buf[1] = EXAMPLE_TX_BUF_KB;
+    s_tx_buf[2] = EXAMPLE_TX_BUF_KB;
+    s_tx_buf[3] = EXAMPLE_TX_BUF_KB;
+    s_tx_buf[4] = EXAMPLE_TX_BUF_KB;
+    s_tx_buf[5] = EXAMPLE_TX_BUF_KB;
+    s_tx_buf[6] = EXAMPLE_TX_BUF_KB;
+    s_tx_buf[7] = EXAMPLE_TX_BUF_KB;
 
-    ESP_LOGI(TAG, "Initializing W5500 TOE");
-    ESP_ERROR_CHECK(esp_wiz_toe_init(&cfg));
+    s_rx_buf[0] = EXAMPLE_RX_BUF_KB;
+    s_rx_buf[1] = EXAMPLE_RX_BUF_KB;
+    s_rx_buf[2] = EXAMPLE_RX_BUF_KB;
+    s_rx_buf[3] = EXAMPLE_RX_BUF_KB;
+    s_rx_buf[4] = EXAMPLE_RX_BUF_KB;
+    s_rx_buf[5] = EXAMPLE_RX_BUF_KB;
+    s_rx_buf[6] = EXAMPLE_RX_BUF_KB;
+    s_rx_buf[7] = EXAMPLE_RX_BUF_KB;
 
-#if EXAMPLE_USE_DHCP
-    ESP_LOGI(TAG, "Starting DHCP");
-    ESP_ERROR_CHECK(esp_wiz_toe_dhcp_start(15000));
-#endif
+    fill_spi_config(&s_spi_cfg);
+
+    ESP_ERROR_CHECK(esp_wiz_toe_spi_init(&s_spi_cfg));
+    ESP_ERROR_CHECK(esp_wiz_toe_spi_register_iolib_callbacks());
+    ESP_ERROR_CHECK(esp_wiz_toe_spi_reset());
+
+    if (wizchip_init(s_tx_buf, s_rx_buf) != 0) {
+        ESP_LOGE(TAG, "wizchip_init failed");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    wizchip_setnetinfo((wiz_NetInfo *)&s_net_info);
 
     while (true) {
-        bool link_up = false;
-        if (esp_wiz_toe_is_link_up(&link_up) != ESP_OK || !link_up) {
+        if (esp_wiz_toe_spi_link_is_up(&s_link_up) != ESP_OK || !s_link_up) {
+            s_link_was_up = false;
             ESP_LOGI(TAG, "PHY link down, retrying...");
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
 
-        esp_err_t ret = esp_wiz_toe_socket(
-            EXAMPLE_SOCKET_NUM,
-            ESP_WIZ_TOE_PROTO_TCP,
-            EXAMPLE_LISTEN_PORT,
-            0,
-            EXAMPLE_ACCEPT_TIMEOUT_MS);
-        if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "Socket open failed: %s", esp_err_to_name(ret));
-            (void)esp_wiz_toe_close(EXAMPLE_SOCKET_NUM);
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
+        if (!s_link_was_up) {
+            ESP_LOGI(TAG, "PHY link up");
+            s_link_was_up = true;
         }
 
-        ret = esp_wiz_toe_listen(EXAMPLE_SOCKET_NUM, EXAMPLE_ACCEPT_TIMEOUT_MS);
-        if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "Listen failed: %s", esp_err_to_name(ret));
-            (void)esp_wiz_toe_close(EXAMPLE_SOCKET_NUM);
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
+        int32_t rc = loopback_tcps(EXAMPLE_SOCKET_NUM,
+                                   s_loopback_buf,
+                                   EXAMPLE_LISTEN_PORT);
+        if (rc < 0) {
+            ESP_LOGW(TAG, "loopback_tcps failed: %ld", (long)rc);
         }
 
-        ESP_LOGI(TAG, "Waiting for client...");
-        ret = esp_wiz_toe_tcp_accept_wait(EXAMPLE_SOCKET_NUM, EXAMPLE_ACCEPT_TIMEOUT_MS);
-        if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "Accept wait timeout/error: %s", esp_err_to_name(ret));
-            (void)esp_wiz_toe_close(EXAMPLE_SOCKET_NUM);
-            continue;
-        }
-
-        while (true) {
-            uint8_t rx_buf[256];
-            size_t recv_len = 0;
-            ret = esp_wiz_toe_recv(EXAMPLE_SOCKET_NUM, rx_buf, sizeof(rx_buf), EXAMPLE_IO_TIMEOUT_MS, &recv_len);
-            if (ret != ESP_OK) {
-                ESP_LOGW(TAG, "Receive ended: %s", esp_err_to_name(ret));
-                break;
-            }
-
-            ESP_LOGI(TAG, "RX %u bytes", (unsigned)recv_len);
-            size_t sent_len = 0;
-            ret = esp_wiz_toe_send(EXAMPLE_SOCKET_NUM, rx_buf, recv_len, EXAMPLE_IO_TIMEOUT_MS, &sent_len);
-            if (ret != ESP_OK) {
-                ESP_LOGW(TAG, "Echo send failed: %s", esp_err_to_name(ret));
-                break;
-            }
-            ESP_LOGI(TAG, "Echoed %u bytes", (unsigned)sent_len);
-        }
-
-        (void)esp_wiz_toe_close(EXAMPLE_SOCKET_NUM);
-        vTaskDelay(pdMS_TO_TICKS(250));
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
 void app_main(void)
 {
-    xTaskCreate(tcp_server_task, "tcp_server_task", 4096, NULL, 5, NULL);
+    xTaskCreate(app_task, "tcp_server_task", 8192, NULL, 5, NULL);
 }

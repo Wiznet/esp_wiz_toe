@@ -1,8 +1,0 @@
--- IDF_TARGET is not set, guessed 'esp32s3' from sdkconfig 'D:/ESP32/esp_wiz_toe/examples/udp_echo/sdkconfig'
--- Found Git: C:/Program Files/Git/cmd/git.exe (found version "2.31.1.windows.1")
--- The C compiler identification is unknown
--- The CXX compiler identification is unknown
--- The ASM compiler identification is unknown
--- Found assembler: xtensa-esp32s3-elf-gcc
--- Warning: Did not find file Compiler/-ASM
--- Configuring incomplete, errors occurred!

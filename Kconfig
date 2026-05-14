@@ -7,6 +7,15 @@ config ESP_WIZ_TOE_ENABLED
 
 if ESP_WIZ_TOE_ENABLED
 
+choice ESP_WIZ_TOE_CHIP
+    prompt "WIZnet chip"
+    default ESP_WIZ_TOE_CHIP_W5500
+
+config ESP_WIZ_TOE_CHIP_W5500
+    bool "W5500"
+
+endchoice
+
 config ESP_WIZ_TOE_SPI_HOST
     int "SPI host (2=SPI2, 3=SPI3)"
     range 2 3
@@ -15,7 +24,7 @@ config ESP_WIZ_TOE_SPI_HOST
 config ESP_WIZ_TOE_SPI_CLOCK_HZ
     int "SPI clock (Hz)"
     range 1000000 80000000
-    default 20000000
+    default 33000000
 
 config ESP_WIZ_TOE_PIN_MISO
     int "GPIO: MISO"
