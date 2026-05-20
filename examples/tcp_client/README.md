@@ -1,7 +1,15 @@
+
 # TCP Client Example
 
-This example initializes the SPI port layer, configures W5500 through ioLibrary, and runs TCP client loopback using `loopback_tcpc`.
+This example initializes the SPI port layer, configures W5500 through ioLibrary, and runs a TCP client loopback using a non-blocking socket and direct RX buffer access (wiz_recv_data).
 
+**Key points:**
+- The socket is opened in non-blocking mode (SF_IO_NONBLOCK) to avoid WDT during connect.
+- Data reception does not use the standard recv() API, but instead reads directly from the RX buffer using wiz_recv_data and setSn_CR(Sn_CR_RECV).
+- This approach avoids the ioLibrary's non-blocking recv() busy loop issue and prevents WDT resets.
+
+**Note:**
+- The application is responsible for checking socket state and RX buffer size before reading.
 ## Build
 
 ```bash
@@ -35,5 +43,5 @@ Expected behavior:
 
 1. ESP initializes SPI and W5500
 2. Network info is applied
-3. TCP client connects to server
-4. Loopback handler echoes received payload
+3. TCP client connects to server (non-blocking, WDT-safe)
+4. Loopback handler echoes received payload using direct RX buffer access

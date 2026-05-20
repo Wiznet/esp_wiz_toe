@@ -4,10 +4,11 @@
 
 #include "esp_log.h"
 #include "esp_wiz_toe.h"
+#include "esp_wiz_toe/Ethernet/socket.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "wizchip_conf.h"
-#include "Application/loopback/loopback.h"
+#include "esp_task_wdt.h"
 
 #define EXAMPLE_SOCKET_NUM 0
 #define EXAMPLE_IO_TIMEOUT_MS 5000
@@ -36,6 +37,55 @@ static uint8_t s_rx_buf[8];
 static uint8_t s_loopback_buf[EXAMPLE_LOOPBACK_BUF_SIZE];
 static bool s_link_up = false;
 static bool s_link_was_up = false;
+static uint16_t s_any_port = 50000;
+
+static int32_t do_retransmit(uint8_t sn, uint8_t *buf, uint16_t buf_size)
+{
+    // State check
+    uint8_t state = getSn_SR(sn);
+    if (state != SOCK_ESTABLISHED && state != SOCK_CLOSE_WAIT) {
+        return 1;
+    }
+
+    uint16_t rx_size = getSn_RX_RSR(sn);
+    if (rx_size == 0) {
+        return 1;
+    }
+    if (rx_size > buf_size) {
+        rx_size = buf_size;
+    }
+
+    // Read directly from RX buffer
+    wiz_recv_data(sn, buf, rx_size);
+    setSn_CR(sn, Sn_CR_RECV);
+    // Wait for command to complete (avoid WDT)
+    while (getSn_CR(sn)) {
+        vTaskDelay(1);
+    }
+
+    // Send loop (keep existing send logic)
+    uint16_t sent = 0;
+    uint32_t send_busy_count = 0;
+    while (sent < rx_size) {
+        int32_t sret = send(sn, buf + sent, rx_size - sent);
+        if (sret == SOCK_BUSY) {
+            send_busy_count++;
+            if ((send_busy_count % 100U) == 0U) {
+                ESP_LOGW(TAG, "send busy progress=%u/%u", (unsigned)sent, (unsigned)rx_size);
+            }
+            vTaskDelay(pdMS_TO_TICKS(1));
+            continue;
+        }
+        if (sret < 0) {
+            ESP_LOGW(TAG, "send failed ret=%ld progress=%u/%u", (long)sret, (unsigned)sent, (unsigned)rx_size);
+            (void)close(sn);
+            return sret;
+        }
+        sent += (uint16_t)sret;
+    }
+
+    return 1;
+}
 
 static const wiz_NetInfo s_net_info = {
     .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56},
@@ -61,9 +111,11 @@ static void fill_spi_config(esp_wiz_toe_spi_config_t *cfg)
     cfg->lock_timeout_ms = EXAMPLE_IO_TIMEOUT_MS;
 }
 
-static void app_task(void *arg)
+static void tcp_client_task(void *arg)
 {
     (void)arg;
+    int32_t rc;
+    uint32_t connect_busy_count = 0;
 
     s_tx_buf[0] = EXAMPLE_TX_BUF_KB;
     s_tx_buf[1] = EXAMPLE_TX_BUF_KB;
@@ -131,12 +183,73 @@ static void app_task(void *arg)
             s_link_was_up = true;
         }
 
-        int32_t rc = loopback_tcpc(EXAMPLE_SOCKET_NUM,
-                                   s_loopback_buf,
-                                   (uint8_t *)EXAMPLE_SERVER_IP,
-                                   EXAMPLE_SERVER_PORT);
+
+        switch (getSn_SR(EXAMPLE_SOCKET_NUM)) {
+        case SOCK_ESTABLISHED:
+            connect_busy_count = 0;
+            if (getSn_IR(EXAMPLE_SOCKET_NUM) & Sn_IR_CON) {
+                setSn_IR(EXAMPLE_SOCKET_NUM, Sn_IR_CON);
+                ESP_LOGI(TAG, "Connected to %u.%u.%u.%u:%u",
+                         EXAMPLE_SERVER_IP[0], EXAMPLE_SERVER_IP[1], EXAMPLE_SERVER_IP[2], EXAMPLE_SERVER_IP[3],
+                         (unsigned)EXAMPLE_SERVER_PORT);
+            }
+            // 논블로킹 모드에서 RX 버퍼에 데이터가 있을 때만 do_retransmit 호출
+            if (getSn_RX_RSR(EXAMPLE_SOCKET_NUM) > 0) {
+                rc = do_retransmit(EXAMPLE_SOCKET_NUM, s_loopback_buf, EXAMPLE_LOOPBACK_BUF_SIZE);
+            }
+            break;
+
+        case SOCK_CLOSE_WAIT:
+            // 논블로킹 모드에서 RX 버퍼에 데이터가 있을 때만 do_retransmit 호출
+            if (getSn_RX_RSR(EXAMPLE_SOCKET_NUM) > 0) {
+                rc = do_retransmit(EXAMPLE_SOCKET_NUM, s_loopback_buf, EXAMPLE_LOOPBACK_BUF_SIZE);
+            }
+            if (rc >= 0) {
+                rc = disconnect(EXAMPLE_SOCKET_NUM);
+                if (rc == SOCK_OK) {
+                    ESP_LOGI(TAG, "Socket disconnected");
+                    rc = 1;
+                }
+            }
+            break;
+
+        case SOCK_INIT:
+            rc = connect(EXAMPLE_SOCKET_NUM, (uint8_t *)EXAMPLE_SERVER_IP, EXAMPLE_SERVER_PORT);
+            if (rc == SOCK_BUSY) {
+                connect_busy_count++;
+                if ((connect_busy_count % 200U) == 0U) {
+                    ESP_LOGI(TAG, "Connecting to %u.%u.%u.%u:%u...",
+                             EXAMPLE_SERVER_IP[0], EXAMPLE_SERVER_IP[1], EXAMPLE_SERVER_IP[2], EXAMPLE_SERVER_IP[3],
+                             (unsigned)EXAMPLE_SERVER_PORT);
+                }
+                rc = 1;
+            } else {
+                connect_busy_count = 0;
+            }
+            break;
+
+        case SOCK_CLOSED:
+            connect_busy_count = 0;
+            (void)close(EXAMPLE_SOCKET_NUM);
+            // Open socket in non-blocking mode (SF_IO_NONBLOCK)
+            rc = socket(EXAMPLE_SOCKET_NUM, Sn_MR_TCP, s_any_port++, SF_IO_NONBLOCK);
+            if (rc == EXAMPLE_SOCKET_NUM) {
+                ESP_LOGI(TAG, "Client socket opened (non-blocking)");
+                rc = 1;
+            }
+            if (s_any_port == 0xFFFFU) {
+                s_any_port = 50000;
+            }
+            break;
+
+        default:
+            rc = 1;
+            break;
+        }
+
         if (rc < 0) {
-            ESP_LOGW(TAG, "loopback_tcpc failed: %ld", (long)rc);
+            ESP_LOGW(TAG, "tcp_client_task step failed: %ld", (long)rc);
+            vTaskDelay(pdMS_TO_TICKS(100));
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -146,5 +259,5 @@ static void app_task(void *arg)
 
 void app_main(void)
 {
-    xTaskCreate(app_task, "tcp_client_task", 8192, NULL, 5, NULL);
+    xTaskCreate(tcp_client_task, "tcp_client_task", 8192, NULL, 5, NULL);
 }
