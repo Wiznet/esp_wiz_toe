@@ -8,7 +8,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "wizchip_conf.h"
-#include "esp_task_wdt.h"
 
 #define EXAMPLE_SOCKET_NUM 0
 #define EXAMPLE_IO_TIMEOUT_MS 5000
@@ -114,7 +113,7 @@ static void fill_spi_config(esp_wiz_toe_spi_config_t *cfg)
 static void tcp_client_task(void *arg)
 {
     (void)arg;
-    int32_t rc;
+    int32_t rc = 0;
     uint32_t connect_busy_count = 0;
 
     s_tx_buf[0] = EXAMPLE_TX_BUF_KB;
