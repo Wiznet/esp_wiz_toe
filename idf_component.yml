@@ -1,5 +1,5 @@
 name: esp_wiz_toe
-version: "0.1.0-alpha.1"
+version: "0.1.0-alpha.5"
 description: "ESP-IDF SPI port layer for using WIZnet W5500 with the official ioLibrary"
 license: "MIT"
 repository: "https://github.com/Wiznet/esp_wiz_toe"
