@@ -137,5 +137,5 @@ idf.py -p COM38 flash monitor
 - `ioLibrary_Driver` is a third-party dependency with its own license terms.
 
 
-[link-esp_idf_terminal]: https://github.com/Wiznet/esp_wiz_toe/blob/main/static/image/esp_idf_terminal.png
-[link-hercules]: https://github.com/Wiznet/esp_wiz_toe/blob/main/static/image/hercules.png
+[link-esp_idf_terminal]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/esp_idf_terminal.png
+[link-hercules]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/hercules.png
