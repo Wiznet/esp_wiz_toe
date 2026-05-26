@@ -10,19 +10,44 @@ This example initializes the SPI port layer, configures W5500 through ioLibrary,
 
 **Note:**
 - The application is responsible for checking socket state and RX buffer size before reading.
-## Build
-
-```bash
-idf.py set-target esp32s3
-idf.py build
-```
 
 ## Configuration
 
-- Listen port is configured in `main/main.c`:
-  - `EXAMPLE_LISTEN_PORT`
-- SPI host/clock/pins come from:
-  - `Component config -> WIZnet TOE Component`
+### Chip Configuration
+```bash
+idf.py set-target esp32s3
+idf.py menuconfig
+```
+
+Select the Component config option in menuconfig.
+![][link-config_main]
+
+Select the WIZnet TOE Component option under Component config.
+![][link-config_component]
+
+Configure the WIZnet chip, SPI host number, clock, pins, and socket buffer size settings as shown below. In this example, SPI2 of the ESP32-S3 was used.
+![][link-config_wiz_toe]
+
+| W5500 | ESP32S3 Pin |
+|----------|----------|
+| MISO | 13 |
+| MOSI | 11 |
+| SCLK | 12 |
+| CS | 10 |
+| RESET | 9 |
+| INT | 14 |
+
+### Network Configuration
+Configure the network settings in the `example/tcp_server/main/main.c file`.
+```bash
+static const uint16_t EXAMPLE_LISTEN_PORT = 5000;
+```
+## Build
+```bash
+idf.py build
+```
+
+![][link-build_log]
 
 ## Run
 
@@ -30,12 +55,33 @@ idf.py build
 idf.py -p <PORT> flash monitor
 ```
 
-## Test with netcat
+If flashing succeeds, you should see socket listening logs in the terminal as shown below.
 
-On PC (client side):
+![][link-run_tcp_server_open]
 
-```bash
-nc <ESP_IP> 5000
-```
+Enter the server IP in the Hercules tool and connect the TCP client.
 
-Type text and press Enter. The server loopback handler echoes payload using direct RX buffer access.
+![][link-run_tcp_client]
+
+You can see the client connected log in the terminal as shown below.
+
+![][link-run_tcp_client_connected]
+
+Send data from the Hercules tool. You can verify that the transmitted data is received exactly as sent.
+
+![][link-run_loopback]
+
+
+<!--
+Link
+-->
+[link-config_main]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tcp_server/config_main.png
+[link-config_component]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tcp_server/config_component.png
+[link-config_wiz_toe]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tcp_server/config_wiz_toe.png
+[link-config_wiz_toe]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tcp_server/build_log.png
+
+[link-build_log]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tcp_server/build_log.png
+[link-run_tcp_server_open]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tcp_server/run_tcp_server_open.png
+[link-run_tcp_client]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tcp_server/run_tcp_client.png
+[link-run_tcp_client_connected]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tcp_server/run_tcp_client_connected.png
+[link-run_loopback]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tcp_server/run_loopback.png
