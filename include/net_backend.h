@@ -12,7 +12,9 @@
 
 #include <stdbool.h>
 
+#include "esp_err.h"
 #include "wizchip_conf.h"   /* wiz_NetInfo */
+#include "wsm_driver.h"     /* wsm_driver_spi_config_t */
 
 /* Isolation layer: wizchip_conf.h -> W5500/w5500.h:920,925 defines SOCK_STREAM
  * and SOCK_DGRAM as ioLibrary's Sn_MR protocol values (0x01 / 0x02), while
@@ -46,6 +48,26 @@ void wiznet_net_init(const wiz_NetInfo *net_info);
 
 /* True once bring-up has completed. */
 bool wiznet_net_is_up(void);
+
+/* Lower-level TOE bring-up, for applications that already own their network
+ * lifecycle (an existing esp_netif, event loop, or SPI bus).
+ *
+ * Does exactly the chip half of wiznet_net_init():
+ *     SPI transport -> ioLibrary callbacks -> reset -> version check
+ *     -> wizchip_init() -> wizchip_setnetinfo(net_info)
+ *
+ * and deliberately does NOT touch anything the application may own:
+ * no esp_netif_init(), no esp_event_loop_create_default(), no esp_netif_new(),
+ * no DHCP and no DNS. The caller supplies the wiring through spi_cfg instead of
+ * the CONFIG_WSM_DRIVER_PIN_* Kconfig values, and decides via
+ * spi_cfg->bus_initialized_by_caller whether the SPI bus is initialized here.
+ *
+ * wiznet_net_init() is unchanged and still available for standalone apps; it is
+ * now implemented on top of this function.
+ *
+ * @return ESP_OK on success, otherwise the first failing step's error. */
+esp_err_t wiznet_toe_bringup(const wsm_driver_spi_config_t *spi_cfg,
+                             const wiz_NetInfo *net_info);
 
 #ifdef __cplusplus
 }
