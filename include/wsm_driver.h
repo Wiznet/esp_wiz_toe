@@ -32,6 +32,20 @@ typedef struct {
     gpio_num_t pin_io2;    /**< W6300 quad mode only; ignored otherwise */
     gpio_num_t pin_io3;    /**< W6300 quad mode only; ignored otherwise */
     uint32_t lock_timeout_ms;
+    /** SPI bus ownership. Explicit rather than inferred, so a shared bus never
+     *  depends on swallowing ESP_ERR_INVALID_STATE from spi_bus_initialize().
+     *
+     *  false (the zero-initialized default, and what standalone apps want):
+     *      wsm_driver owns the bus -- it calls spi_bus_initialize() here and
+     *      spi_bus_free() in wsm_driver_spi_deinit(). host_id/pin_miso/pin_mosi/
+     *      pin_sclk describe the bus to create.
+     *
+     *  true: the application already called spi_bus_initialize() on host_id
+     *      (e.g. it shares the bus with a display or an SD card). wsm_driver
+     *      only adds and later removes its own device on that bus, and never
+     *      frees it. pin_miso/pin_mosi/pin_sclk are then unused; host_id, the
+     *      clock and the CS/RST/INT pins still apply. */
+    bool bus_initialized_by_caller;
 } wsm_driver_spi_config_t;
 
 esp_err_t wsm_driver_spi_init(const wsm_driver_spi_config_t *cfg);
