@@ -23,6 +23,7 @@
 #include <stdbool.h>
 
 #include "sdkconfig.h"
+#include "esp_err.h"
 #include "esp_log.h"
 #include "esp_event.h"
 #include "esp_netif.h"
@@ -69,12 +70,85 @@ static void fill_spi_config(wsm_driver_spi_config_t *cfg)
 #endif
 }
 
+/* esp_netif_init() / esp_event_loop_create_default() are process-wide singletons.
+ * ESP_ERR_INVALID_STATE from either means "someone already did this", which is a
+ * normal outcome -- not an error -- for a component that shares the application
+ * with other stacks (Wi-Fi, mDNS, an existing esp_netif, ...). Treat it as
+ * success and let real failures through. */
+static esp_err_t toe_ensure_lwip_core(void)
+{
+    esp_err_t err = esp_netif_init();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "esp_netif_init failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = esp_event_loop_create_default();
+    if (err == ESP_ERR_INVALID_STATE) {
+        ESP_LOGD(TAG, "default event loop already exists (kept)");
+    } else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_event_loop_create_default failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    return ESP_OK;
+}
+
+esp_err_t wiznet_toe_bringup(const wsm_driver_spi_config_t *spi_cfg,
+                             const wiz_NetInfo *net_info)
+{
+    esp_err_t err;
+
+    if (spi_cfg == NULL || net_info == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* SPI transport. Whether the bus itself is initialized here or was already
+     * brought up by the caller is decided by spi_cfg->bus_initialized_by_caller. */
+    err = wsm_driver_spi_init(spi_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "wsm_driver_spi_init failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = wsm_driver_spi_register_iolib_callbacks();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "register iolib callbacks failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = wsm_driver_spi_reset();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "chip reset failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    if (wsm_driver_spi_wizchip_check() != ESP_OK) {
+        ESP_LOGW(TAG, "wizchip id/version check failed (continuing)");
+    }
+
+    /* Hardware TCP/IP engine: per-socket buffers from Kconfig (both symbols have
+     * a prompt, so they are settable from sdkconfig without touching this code). */
+    uint8_t tx[8], rx[8];
+    memset(tx, TOE_TX_BUF_KB, sizeof(tx));
+    memset(rx, TOE_RX_BUF_KB, sizeof(rx));
+    if (wizchip_init(tx, rx) != 0) {
+        ESP_LOGE(TAG, "wizchip_init failed");
+        return ESP_FAIL;
+    }
+
+    /* The CHIP owns the IP in TOE mode. */
+    wizchip_setnetinfo((wiz_NetInfo *)net_info);
+
+    ESP_LOGI(TAG, "TOE chip up: %u.%u.%u.%u (WIZnet hardware TCP/IP)",
+             net_info->ip[0], net_info->ip[1], net_info->ip[2], net_info->ip[3]);
+    return ESP_OK;
+}
+
 void wiznet_net_init(const wiz_NetInfo *net_info)
 {
     /* 1) lwIP core + default event loop -> registers the socket VFS fd-range
      *    (so close(fd) works, and reaches __wrap_lwip_close under SOCKET_WRAP). */
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(toe_ensure_lwip_core());
 
     /* 2) shadow netif holding the IPv4 identity (no driver attached; no data). */
     esp_netif_inherent_config_t base = ESP_NETIF_INHERENT_DEFAULT_ETH();
@@ -93,30 +167,15 @@ void wiznet_net_init(const wiz_NetInfo *net_info)
         esp_netif_set_ip_info(s_shadow, &ip);
     }
 
-    /* 3) W5500/W6300 over SPI via ioLibrary, wired from Kconfig. */
+    /* 3) W5500/W6300 over SPI via ioLibrary, wired from Kconfig.
+     *    Steps 3-5 are wiznet_toe_bringup(); this harness only supplies the
+     *    Kconfig-derived SPI config so standalone apps keep working unchanged. */
     wsm_driver_spi_config_t spi;
     fill_spi_config(&spi);
-    ESP_ERROR_CHECK(wsm_driver_spi_init(&spi));
-    ESP_ERROR_CHECK(wsm_driver_spi_register_iolib_callbacks());
-    ESP_ERROR_CHECK(wsm_driver_spi_reset());
-    if (wsm_driver_spi_wizchip_check() != ESP_OK) {
-        ESP_LOGW(TAG, "wizchip id/version check failed (continuing)");
-    }
-
-    /* 4) init the chip's hardware TCP/IP (per-socket buffers from Kconfig). */
-    uint8_t tx[8], rx[8];
-    memset(tx, TOE_TX_BUF_KB, sizeof(tx));
-    memset(rx, TOE_RX_BUF_KB, sizeof(rx));
-    if (wizchip_init(tx, rx) != 0) {
-        ESP_LOGE(TAG, "wizchip_init failed");
+    if (wiznet_toe_bringup(&spi, net_info) != ESP_OK) {
         return;
     }
 
-    /* 5) apply the caller's identity to the chip (honours dns + W6300 ipmode). */
-    wizchip_setnetinfo((wiz_NetInfo *)net_info);
-
-    ESP_LOGI(TAG, "TOE up: %u.%u.%u.%u (WIZnet hardware TCP/IP)",
-             net_info->ip[0], net_info->ip[1], net_info->ip[2], net_info->ip[3]);
     s_net_up = true;
 }
 
