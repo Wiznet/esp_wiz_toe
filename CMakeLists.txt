@@ -76,12 +76,15 @@ idf_component_register(
     REQUIRES
         esp_driver_spi
         esp_driver_gpio
+        # Public: include/esp_eth_{mac,phy}_{w5500,w6300}.h include esp_eth's own
+        # public headers (esp_eth_com.h / esp_eth_mac_spi.h / esp_eth_phy.h), so
+        # consumers of those headers need esp_eth on their include path too.
+        esp_eth
     PRIV_REQUIRES
         esp_netif
         esp_event
         esp_timer
         lwip
-        esp_eth
         esp_wifi
         nvs_flash
         driver
