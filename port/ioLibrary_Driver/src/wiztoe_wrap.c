@@ -20,11 +20,19 @@
  */
 #include <string.h>
 #include <errno.h>
+#include <fcntl.h>            /* F_GETFL, F_SETFL, O_NONBLOCK */
 #include <sys/time.h>
+#include <sys/uio.h>          /* struct iovec */
 
 #include "lwip/sockets.h"     /* LWIP_SOCKET_OFFSET, struct sockaddr_in, lwip_htons/htonl */
 
 #include "wiznet_toe.h"
+
+/* Both "would have blocked" flavours map to the same POSIX condition. */
+static int toe_is_wouldblock(int rc)
+{
+    return rc == WIZTOE_ERR_TIMEOUT || rc == WIZTOE_ERR_WOULDBLOCK;
+}
 
 static void toe_fill_sockaddr(struct sockaddr *addr, socklen_t *addrlen,
                               const uint8_t ip[4], uint16_t port)
@@ -78,7 +86,7 @@ int __wrap_lwip_listen(int s, int backlog)
 int __wrap_lwip_accept(int s, struct sockaddr *addr, socklen_t *addrlen)
 {
     int fd = wiztoe_accept(s - LWIP_SOCKET_OFFSET);
-    if (fd == WIZTOE_ERR_TIMEOUT) { errno = EWOULDBLOCK; return -1; }
+    if (toe_is_wouldblock(fd)) { errno = EWOULDBLOCK; return -1; }
     if (fd < 0) { errno = EINVAL; return -1; }
     uint8_t ip[4]; uint16_t port;
     wiztoe_peer(fd, ip, &port);
@@ -101,6 +109,7 @@ ssize_t __wrap_lwip_send(int s, const void *data, size_t size, int flags)
 {
     (void)flags;
     int n = wiztoe_send(s - LWIP_SOCKET_OFFSET, data, size);
+    if (toe_is_wouldblock(n)) { errno = EWOULDBLOCK; return -1; }
     if (n < 0) { errno = EIO; return -1; }
     errno = 0;
     return n;
@@ -111,7 +120,7 @@ ssize_t __wrap_lwip_recv(int s, void *mem, size_t len, int flags)
     (void)flags;
     int toe_fd = s - LWIP_SOCKET_OFFSET;
     int n = wiztoe_recv(toe_fd, mem, len);
-    if (n == WIZTOE_ERR_TIMEOUT) { errno = EWOULDBLOCK; return -1; }
+    if (toe_is_wouldblock(n)) { errno = EWOULDBLOCK; return -1; }
     if (n < 0) { errno = EIO; return -1; }
     errno = 0;
     return n;
@@ -130,7 +139,7 @@ ssize_t __wrap_lwip_recvfrom(int s, void *mem, size_t len, int flags,
         n = wiztoe_recv(toe_fd, mem, len);
         wiztoe_peer(toe_fd, ip, &port);
     }
-    if (n == WIZTOE_ERR_TIMEOUT) { errno = EWOULDBLOCK; return -1; }
+    if (toe_is_wouldblock(n)) { errno = EWOULDBLOCK; return -1; }
     if (n < 0) { errno = EIO; return -1; }
     toe_fill_sockaddr(from, fromlen, ip, port);
     errno = 0;
@@ -150,6 +159,7 @@ ssize_t __wrap_lwip_sendto(int s, const void *data, size_t size, int flags,
         toe_ip_from_sockaddr(to, ip, &port);
         n = wiztoe_sendto(toe_fd, data, size, ip, port);
     }
+    if (toe_is_wouldblock(n)) { errno = EWOULDBLOCK; return -1; }
     if (n < 0) { errno = EIO; return -1; }
     errno = 0;
     return n;
@@ -291,4 +301,157 @@ int __wrap_lwip_getsockopt(int s, int level, int optname, void *optval, socklen_
     }
     errno = ENOPROTOOPT;
     return -1;
+}
+
+/* ---------------------------------------------------------------------------
+ * read / write / readv / writev / fcntl / shutdown / getpeername
+ *
+ * These reach a TOE fd through two routes, and both end at lwip_*, which is why
+ * wrapping the lwip_* symbol is enough for either:
+ *   - the VFS (newlib read()/write()/fcntl() -> vfs_lwip.c -> lwip_read/...)
+ *   - a direct ::lwip_read()/::lwip_write() call, which some socket layers make
+ *     to skip the VFS indirection.
+ * Without these wraps the calls reach the real lwIP, which has no socket for a
+ * TOE fd and fails with EBADF -- a failure that only shows up at run time.
+ * ------------------------------------------------------------------------- */
+
+ssize_t __wrap_lwip_read(int s, void *mem, size_t len)
+{
+    /* POSIX: read(fd, buf, n) on a socket == recv(fd, buf, n, 0). */
+    return __wrap_lwip_recv(s, mem, len, 0);
+}
+
+ssize_t __wrap_lwip_write(int s, const void *data, size_t size)
+{
+    /* POSIX: write(fd, buf, n) on a socket == send(fd, buf, n, 0). */
+    return __wrap_lwip_send(s, data, size, 0);
+}
+
+ssize_t __wrap_lwip_readv(int s, const struct iovec *iov, int iovcnt)
+{
+    if (iov == NULL || iovcnt <= 0) { errno = EINVAL; return -1; }
+
+    int toe_fd = s - LWIP_SOCKET_OFFSET;
+    ssize_t total = 0;
+
+    for (int i = 0; i < iovcnt; i++) {
+        if (iov[i].iov_len == 0)
+            continue;
+
+        /* Only the first buffer may wait (and only if the socket is blocking).
+         * Later buffers are filled solely from data already in the chip's RX
+         * buffer, so a scatter read can never block after it has data in hand.
+         * Returning less than the total is a short read, which POSIX allows on
+         * a stream socket. */
+        if (total > 0 && wiztoe_available(toe_fd) <= 0)
+            break;
+
+        int n = wiztoe_recv(toe_fd, iov[i].iov_base, iov[i].iov_len);
+        if (toe_is_wouldblock(n)) {
+            if (total > 0)
+                break;                       /* report what we already read */
+            errno = EWOULDBLOCK;
+            return -1;
+        }
+        if (n < 0) {
+            if (total > 0)
+                break;
+            errno = EIO;
+            return -1;
+        }
+        total += n;
+        if ((size_t)n < iov[i].iov_len)
+            break;                           /* short fill: nothing more waiting */
+    }
+
+    errno = 0;
+    return total;
+}
+
+ssize_t __wrap_lwip_writev(int s, const struct iovec *iov, int iovcnt)
+{
+    if (iov == NULL || iovcnt <= 0) { errno = EINVAL; return -1; }
+
+    int toe_fd = s - LWIP_SOCKET_OFFSET;
+    ssize_t total = 0;
+
+    for (int i = 0; i < iovcnt; i++) {
+        if (iov[i].iov_len == 0)
+            continue;
+
+        int n = wiztoe_send(toe_fd, iov[i].iov_base, iov[i].iov_len);
+        if (toe_is_wouldblock(n)) {
+            if (total > 0)
+                break;                       /* partial gather write */
+            errno = EWOULDBLOCK;
+            return -1;
+        }
+        if (n < 0) {
+            if (total > 0)
+                break;
+            errno = EIO;
+            return -1;
+        }
+        total += n;
+        if ((size_t)n < iov[i].iov_len)
+            break;                           /* short write: stop, caller resumes */
+    }
+
+    errno = 0;
+    return total;
+}
+
+int __wrap_lwip_fcntl(int s, int cmd, int val)
+{
+    int toe_fd = s - LWIP_SOCKET_OFFSET;
+    int nb;
+
+    switch (cmd) {
+    case F_GETFL:
+        nb = wiztoe_get_nonblocking(toe_fd);
+        if (nb < 0) { errno = EBADF; return -1; }
+        errno = 0;
+        return nb ? O_NONBLOCK : 0;
+
+    case F_SETFL:
+        /* O_NONBLOCK is the only flag the chip can honour. Anything else is
+         * ignored rather than rejected, matching lwIP's own lwip_fcntl. */
+        if (wiztoe_set_nonblocking(toe_fd, (val & O_NONBLOCK) != 0) < 0) {
+            errno = EBADF;
+            return -1;
+        }
+        errno = 0;
+        return 0;
+
+    default:
+        /* Not silently succeeding: a caller asking for F_DUPFD or file locks
+         * must find out that it did not happen. */
+        errno = EINVAL;
+        return -1;
+    }
+}
+
+int __wrap_lwip_shutdown(int s, int how)
+{
+    int shut_rd = (how == SHUT_RD) || (how == SHUT_RDWR);
+    int shut_wr = (how == SHUT_WR) || (how == SHUT_RDWR);
+
+    if (!shut_rd && !shut_wr) { errno = EINVAL; return -1; }
+
+    if (wiztoe_shutdown(s - LWIP_SOCKET_OFFSET, shut_rd, shut_wr) < 0) {
+        errno = ENOTCONN;
+        return -1;
+    }
+    errno = 0;
+    return 0;
+}
+
+int __wrap_lwip_getpeername(int s, struct sockaddr *name, socklen_t *namelen)
+{
+    /* Reuses the existing wiztoe_peer(); no new peer bookkeeping is introduced. */
+    uint8_t ip[4]; uint16_t port;
+    wiztoe_peer(s - LWIP_SOCKET_OFFSET, ip, &port);
+    toe_fill_sockaddr(name, namelen, ip, port);
+    errno = 0;
+    return 0;
 }

@@ -229,9 +229,17 @@ if(CONFIG_WSM_DRIVER_SOCKET_WRAP)
     # Intercept lwIP's BSD socket entry points at link time -> wiztoe_wrap.c.
     # INTERFACE so the flags reach the final executable link; -u forces the
     # __wrap_* symbols to be kept even if only referenced through the wrap.
+    # read/write/readv/writev/fcntl/shutdown/getpeername are as much a part of the
+    # BSD socket vocabulary as recv/send. Without them those calls reach the real
+    # lwIP, which holds no socket for a TOE fd, and fail with EBADF at run time
+    # only -- the build stays clean, which makes it the worst kind of gap.
+    # lwip_ioctl is deliberately absent: no confirmed caller needs it yet, and
+    # wiztoe_available() is ready if FIONREAD ever does.
     set(WRAP_FNS lwip_socket lwip_bind lwip_listen lwip_accept lwip_connect
                  lwip_send lwip_recv lwip_recvfrom lwip_sendto
-                 lwip_setsockopt lwip_getsockopt lwip_getsockname lwip_close)
+                 lwip_setsockopt lwip_getsockopt lwip_getsockname lwip_close
+                 lwip_read lwip_write lwip_readv lwip_writev
+                 lwip_fcntl lwip_shutdown lwip_getpeername)
     foreach(fn ${WRAP_FNS})
         target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=${fn}")
         target_link_libraries(${COMPONENT_LIB} INTERFACE "-u __wrap_${fn}")
