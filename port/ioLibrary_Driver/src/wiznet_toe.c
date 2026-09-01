@@ -34,6 +34,8 @@ typedef struct {
     uint8_t listening;
     uint8_t accepted;
     uint8_t nodelay;
+    uint8_t nonblocking;   /* POSIX O_NONBLOCK */
+    uint8_t rd_shutdown;   /* SHUT_RD: report EOF instead of buffered data */
     uint16_t port;
     uint32_t rcv_timeout_ms;
     uint32_t snd_timeout_ms;
@@ -43,6 +45,8 @@ typedef struct {
 } toe_sock_t;
 
 static toe_sock_t g_toe[WIZTOE_MAX_SOCK];
+
+static void toe_tcp_disconnect_if_connected(int fd);
 
 static int toe_fd_valid(int fd)
 {
@@ -113,6 +117,55 @@ int wiztoe_is_udp(int fd)
     return toe_fd_valid(fd) && g_toe[fd].is_udp;
 }
 
+int wiztoe_set_nonblocking(int fd, int enable)
+{
+    if (!toe_fd_valid(fd))
+        return -1;
+
+    g_toe[fd].nonblocking = enable ? 1 : 0;
+    return 0;
+}
+
+int wiztoe_get_nonblocking(int fd)
+{
+    if (!toe_fd_valid(fd))
+        return -1;
+
+    return g_toe[fd].nonblocking ? 1 : 0;
+}
+
+int wiztoe_available(int fd)
+{
+    if (!toe_fd_valid(fd))
+        return -1;
+    if (!g_toe[fd].opened)
+        return 0;
+
+    return (int)getSn_RX_RSR((uint8_t)fd);
+}
+
+int wiztoe_shutdown(int fd, int shut_rd, int shut_wr)
+{
+    if (!toe_fd_valid(fd))
+        return -1;
+
+    if (shut_rd)
+    {
+        /* The chip keeps filling its RX buffer regardless; all we can honour is
+         * the promise that this side stops delivering data. */
+        g_toe[fd].rd_shutdown = 1;
+    }
+
+    if (shut_wr && !g_toe[fd].is_udp)
+    {
+        /* Send FIN so the peer observes EOF. The fd stays allocated -- freeing
+         * it is close()'s job, and a half-closed socket must still be readable. */
+        toe_tcp_disconnect_if_connected(fd);
+    }
+
+    return 0;
+}
+
 int wiztoe_bind(int fd, uint16_t port)
 {
     if (!toe_fd_valid(fd))
@@ -168,6 +221,10 @@ int wiztoe_accept(int fd)
             if (listen((uint8_t)fd) != SOCK_OK)
                 return -1;
         }
+        /* Re-armed above if needed, so the listener is live either way; report
+         * "nothing pending" rather than waiting for a client to show up. */
+        if (g_toe[fd].nonblocking)
+            return WIZTOE_ERR_WOULDBLOCK;
         if (g_toe[fd].rcv_timeout_ms && ++waited >= g_toe[fd].rcv_timeout_ms)
             return WIZTOE_ERR_TIMEOUT;
         toe_yield_1ms();
@@ -209,6 +266,20 @@ int wiztoe_send(int fd, const void *buf, size_t len)
     if (len > 0xFFFF)
         len = 0xFFFF;
 
+    if (g_toe[fd].nonblocking)
+    {
+        /* ioLibrary's send() spins in `while (len > freesize)` until the chip
+         * drains, which is exactly the wait a non-blocking caller forbade.
+         * Clamping to the free space keeps it on the `len <= freesize` path,
+         * where it returns without waiting, and a short write is what POSIX
+         * expects from a non-blocking stream send. */
+        uint16_t freesize = getSn_TX_FSR((uint8_t)fd);
+        if (freesize == 0)
+            return WIZTOE_ERR_WOULDBLOCK;
+        if (len > freesize)
+            len = freesize;
+    }
+
     int32_t n = send((uint8_t)fd, (uint8_t *)buf, (uint16_t)len);
     return (n < 0) ? -1 : (int)n;
 }
@@ -220,6 +291,9 @@ int wiztoe_recv(int fd, void *buf, size_t len)
     if (len > 0xFFFF)
         len = 0xFFFF;
 
+    if (g_toe[fd].rd_shutdown)
+        return 0;                              /* EOF after shutdown(SHUT_RD) */
+
     uint32_t waited = 0;
     for (;;)
     {
@@ -227,6 +301,11 @@ int wiztoe_recv(int fd, void *buf, size_t len)
             break;
         if (getSn_SR((uint8_t)fd) != SOCK_ESTABLISHED)
             return 0;                          /* EOF */
+        /* Checked after the state test so a closed connection still reports EOF
+         * rather than EWOULDBLOCK -- a non-blocking reader must be able to see
+         * the end of the stream. */
+        if (g_toe[fd].nonblocking)
+            return WIZTOE_ERR_WOULDBLOCK;
         if (g_toe[fd].rcv_timeout_ms)
         {
             if (++waited >= g_toe[fd].rcv_timeout_ms)
@@ -281,6 +360,8 @@ int wiztoe_recvfrom(int fd, void *buf, size_t len, uint8_t ip[4], uint16_t *port
             break;
         if (getSn_SR((uint8_t)fd) != SOCK_UDP)
             return -1;
+        if (g_toe[fd].nonblocking)
+            return WIZTOE_ERR_WOULDBLOCK;
         if (g_toe[fd].rcv_timeout_ms && ++waited >= g_toe[fd].rcv_timeout_ms)
             return WIZTOE_ERR_TIMEOUT;
         toe_yield_1ms();
@@ -379,6 +460,11 @@ int wiztoe_close(int fd)
         if (listen((uint8_t)fd) != SOCK_OK)
             return -1;
         g_toe[fd].accepted = 0;
+        /* The re-armed listener is a fresh connection, so a half-close from the
+         * previous one must not carry over -- otherwise every later client would
+         * see an immediate EOF. (nonblocking is a property the application set
+         * on this fd and deliberately survives.) */
+        g_toe[fd].rd_shutdown = 0;
         return 0;
     }
 

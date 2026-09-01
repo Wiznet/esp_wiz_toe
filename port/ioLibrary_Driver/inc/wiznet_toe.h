@@ -27,6 +27,12 @@ extern "C" {
  * The wrap layer maps this to errno EWOULDBLOCK. */
 #define WIZTOE_ERR_TIMEOUT (-2)
 
+/* Extra error return: the socket is non-blocking and the operation would have
+ * blocked. Kept distinct from WIZTOE_ERR_TIMEOUT so callers can tell "you asked
+ * not to wait" from "you waited and time ran out"; the wrap layer maps both to
+ * errno EWOULDBLOCK, which is what POSIX reports for either. */
+#define WIZTOE_ERR_WOULDBLOCK (-3)
+
 /* Neutral option codes — the wrap layer maps (level, optname) to these. */
 typedef enum {
     WIZTOE_OPT_KEEPALIVE,
@@ -48,6 +54,42 @@ int  wiztoe_getsockopt(int fd, wiztoe_opt_t opt, void *val, size_t *len);
 /* fd allocation / lifetime */
 int  wiztoe_socket(int domain, int type, int protocol);   /* type 1=STREAM, 2=DGRAM */
 int  wiztoe_close(int fd);
+
+/* Non-blocking mode (POSIX O_NONBLOCK).
+ *
+ * Blocking (the default, enable == 0) keeps the historical behaviour: recv /
+ * recvfrom / accept poll the chip until data or a connection arrives, bounded
+ * only by SO_RCVTIMEO if one was set.
+ *
+ * Non-blocking (enable != 0) makes those three return WIZTOE_ERR_WOULDBLOCK
+ * immediately instead of waiting, and makes send report WIZTOE_ERR_WOULDBLOCK
+ * when the chip's TX buffer is full (a partially-filled buffer yields a short
+ * write, as POSIX allows). This is what an event-loop application needs: it
+ * polls many sockets from one thread and can never afford to block in one.
+ *
+ * NOTE: connect() is NOT affected -- see the limitation documented in
+ * docs/wsm_driver_fix.md FIX-2 (ioLibrary signals a non-blocking connect with
+ * SOCK_BUSY, whose value 0 is indistinguishable from a clean EOF on recv).
+ *
+ * @return 0 on success, -1 if fd is not a live socket. */
+int  wiztoe_set_nonblocking(int fd, int enable);
+int  wiztoe_get_nonblocking(int fd);      /* 1 = non-blocking, 0 = blocking, -1 = bad fd */
+
+/* Bytes immediately readable from the chip's RX buffer (0 if none).
+ * -1 if fd is not a live socket. Used by readv() to fill later iovec entries
+ * only while data is already there, and available for a future FIONREAD. */
+int  wiztoe_available(int fd);
+
+/* Half-close.
+ *
+ * shut_wr: send a TCP FIN (ioLibrary disconnect()) so the peer sees EOF.
+ * shut_rd: the W5500 has no way to refuse further RX, so this only records the
+ *          intent locally -- subsequent recv() calls report EOF (0) rather than
+ *          returning data that is already buffered.
+ * The fd stays allocated either way; releasing it remains close()'s job.
+ *
+ * @return 0 on success, -1 if fd is not a live socket. */
+int  wiztoe_shutdown(int fd, int shut_rd, int shut_wr);
 
 /* TCP */
 int  wiztoe_bind(int fd, uint16_t port);
