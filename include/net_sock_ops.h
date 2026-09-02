@@ -44,6 +44,10 @@ typedef struct {
                       const struct sockaddr *to, socklen_t tolen);
     int     (*setsockopt)(int s, int level, int optname, const void *optval, socklen_t optlen);
     int     (*close)(int s);
+    /* Added for wsm_dhcp.h: a polled caller needs O_NONBLOCK, which no
+     * setsockopt expresses portably. Appended, so existing designated
+     * initialisers still compile -- callers must null-check it. */
+    int     (*fcntl)(int s, int cmd, int val);
 } net_sock_ops_t;
 
 /* Ethernet (W5500) socket ops — see file header. */

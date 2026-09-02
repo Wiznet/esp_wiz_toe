@@ -41,6 +41,7 @@ extern ssize_t __real_lwip_sendto(int s, const void *data, size_t size, int flag
                                   const struct sockaddr *to, socklen_t tolen);
 extern int     __real_lwip_setsockopt(int s, int level, int optname, const void *optval, socklen_t optlen);
 extern int     __real_lwip_close(int s);
+extern int     __real_lwip_fcntl(int s, int cmd, int val);
 
 const net_sock_ops_t net_wifi_ops = {
     .socket = __real_lwip_socket,   .bind = __real_lwip_bind,
@@ -49,6 +50,7 @@ const net_sock_ops_t net_wifi_ops = {
     .send = __real_lwip_send,       .recvfrom = __real_lwip_recvfrom,
     .sendto = __real_lwip_sendto,   .setsockopt = __real_lwip_setsockopt,
     .close = __real_lwip_close,
+    .fcntl = __real_lwip_fcntl,
 };
 #else /* SOCKET_WRAP=0: no --wrap; plain lwIP (shared stack with Ethernet). */
 const net_sock_ops_t net_wifi_ops = {
@@ -58,5 +60,6 @@ const net_sock_ops_t net_wifi_ops = {
     .send = lwip_send,       .recvfrom = lwip_recvfrom,
     .sendto = lwip_sendto,   .setsockopt = lwip_setsockopt,
     .close = lwip_close,
+    .fcntl = lwip_fcntl,
 };
 #endif
