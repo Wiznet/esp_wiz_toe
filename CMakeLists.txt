@@ -58,7 +58,10 @@ else()
         # Opt-in BSD-socket integration: neutral TOE API + lwIP --wrap glue.
         list(APPEND WSM_DRIVER_SRCS
             "port/ioLibrary_Driver/src/wiznet_toe.c"
-            "port/ioLibrary_Driver/src/wiztoe_wrap.c")
+            "port/ioLibrary_Driver/src/wiztoe_wrap.c"
+            # DHCP/DNS over the BSD socket vtable. Needs the wrap: its sockets
+            # are ordinary lwip_* calls that must land on the TOE allocator.
+            "port/backend/src/wsm_dhcp.c")
     endif()
 endif()
 
