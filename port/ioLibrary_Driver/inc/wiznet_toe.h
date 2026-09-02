@@ -94,7 +94,9 @@ int  wiztoe_shutdown(int fd, int shut_rd, int shut_wr);
 /* TCP */
 int  wiztoe_bind(int fd, uint16_t port);
 int  wiztoe_listen(int fd, int backlog);
-int  wiztoe_accept(int fd);                                /* listener becomes the connection */
+int  wiztoe_accept(int fd);   /* BSD semantics: returns a NEW fd for the connection;
+                               * the listener fd keeps listening (relocated onto a
+                               * free hardware socket with the same port). */
 int  wiztoe_connect(int fd, const uint8_t ip[4], uint16_t port);
 int  wiztoe_send(int fd, const void *buf, size_t len);
 int  wiztoe_recv(int fd, void *buf, size_t len);           /* 0 = EOF */
@@ -115,7 +117,12 @@ void wiztoe_getsockname(int fd, uint8_t ip[4], uint16_t *port);
 void wiztoe_local_ip(uint8_t ip[4]);
 void wiztoe_local_mac(uint8_t mac[6]);
 
-/* raw hardware-socket reservation (for ioLibrary DHCP_run/DNS_run) */
+/* Raw hardware-socket reservation (for ioLibrary DHCP_run/DNS_run), which take a
+ * socket NUMBER rather than an fd.
+ *
+ * The value returned here is a hardware socket number, NOT a descriptor: it must
+ * be passed to ioLibrary, never to the wiztoe_* functions above. (It used to be
+ * both, because descriptors and hardware sockets were the same integer.) */
 int  wiztoe_socket_reserve(void);
 void wiztoe_socket_release(int sn);
 
