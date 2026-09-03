@@ -324,6 +324,35 @@ int wiztoe_listen(int fd, int backlog)
     return 0;
 }
 
+/* Re-open the hardware socket this listener already owns and put it back in
+ * LISTEN. ioLibrary's socket() issues CLOSE before OPEN, so this is valid from
+ * ANY socket state, and listen() requires exactly the SOCK_INIT that socket()
+ * leaves behind. */
+static int toe_listener_reopen(int fd)
+{
+    uint8_t sn = toe_sn(fd);
+
+    if (socket(sn, Sn_MR_TCP, g_desc[fd].port, toe_open_flag(fd)) != sn)
+        return -1;
+    g_desc[fd].opened = 1;
+
+    if (listen(sn) != SOCK_OK)
+        return -1;
+
+    return 0;
+}
+
+/* Give up the hardware socket a listener is holding. Used when it can no longer
+ * be driven back to LISTEN: the descriptor stays live but unarmed, and the next
+ * poll (or a close() elsewhere) picks a different socket for it. */
+static void toe_listener_disarm(int fd)
+{
+    if (g_desc[fd].sn >= 0)
+        toe_sn_release(g_desc[fd].sn);
+    g_desc[fd].sn = -1;
+    g_desc[fd].opened = 0;
+}
+
 /* Put an unarmed listener back on the air: claim a free hardware socket and
  * open+listen it on the listener's port. Best effort -- with none free the
  * descriptor stays live but unarmed, and close() retries later. */
@@ -336,15 +365,12 @@ static int toe_listener_rearm(int fd)
     if (sn < 0)
         return -1;
 
-    if (socket((uint8_t)sn, Sn_MR_TCP, g_desc[fd].port, toe_open_flag(fd)) != sn ||
-        listen((uint8_t)sn) != SOCK_OK)
+    g_desc[fd].sn = (int8_t)sn;
+    if (toe_listener_reopen(fd) < 0)
     {
-        toe_sn_release(sn);
+        toe_listener_disarm(fd);
         return -1;
     }
-
-    g_desc[fd].sn = (int8_t)sn;
-    g_desc[fd].opened = 1;
     return 0;
 }
 
@@ -398,18 +424,49 @@ int wiztoe_accept(int fd)
         }
         else
         {
-            uint8_t sr = getSn_SR(toe_sn(fd));
-
-            if (sr == SOCK_ESTABLISHED)
+            /* A whitelist, deliberately. The chip drives Sn_SR on its own, and
+             * the previous "handle ESTABLISHED and CLOSED, ignore the rest"
+             * shape meant any state nobody had thought of parked the listener
+             * for good -- a peer that closed before this call reached it left
+             * the socket in SOCK_CLOSE_WAIT, which accepts no further SYN and
+             * never returns to LISTEN by itself. Every state that is not
+             * usable-as-a-listener now ends in a re-open. */
+            switch (getSn_SR(toe_sn(fd)))
+            {
+            case SOCK_ESTABLISHED:
+            case SOCK_CLOSE_WAIT:
+                /* CLOSE_WAIT is a half-close, not a dead socket: the peer sent
+                 * FIN, but anything it sent before that is still in the RX
+                 * buffer and the chip can still transmit (w5500.h, Sn_SR docs).
+                 * So it is handed over exactly like ESTABLISHED -- recv()
+                 * drains it and then reports EOF, and close() answers the FIN.
+                 * Discarding it here would drop a connection BSD delivers, and
+                 * dropping it silently is what used to wedge the listener. */
                 return toe_accept_established(fd);
 
-            if (sr == SOCK_CLOSED)
-            {
-                uint8_t sn = toe_sn(fd);
-                if (socket(sn, Sn_MR_TCP, g_desc[fd].port, toe_open_flag(fd)) != sn)
-                    return -1;
-                if (listen(sn) != SOCK_OK)
-                    return -1;
+            case SOCK_LISTEN:
+                break;                         /* armed and idle: the normal case */
+
+            case SOCK_SYNRECV:
+                /* Handshake in flight. Re-opening now would kill a connection
+                 * that is still being established. */
+                break;
+
+            case SOCK_INIT:
+                /* Opened, but the LISTEN command did not take. listen() wants
+                 * precisely this state, so retry just that. */
+                if (listen(toe_sn(fd)) != SOCK_OK)
+                    toe_listener_disarm(fd);
+                break;
+
+            default:
+                /* SOCK_CLOSED, the closing states (FIN_WAIT / CLOSING /
+                 * TIME_WAIT / LAST_ACK, which only leave on a chip timeout), a
+                 * stale non-TCP mode, or a value not in the datasheet. None can
+                 * accept a SYN; none recover into LISTEN unaided. */
+                if (toe_listener_reopen(fd) < 0)
+                    toe_listener_disarm(fd);
+                break;
             }
         }
         /* Re-armed above if needed, so the listener is live either way; report

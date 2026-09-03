@@ -96,7 +96,11 @@ int  wiztoe_bind(int fd, uint16_t port);
 int  wiztoe_listen(int fd, int backlog);
 int  wiztoe_accept(int fd);   /* BSD semantics: returns a NEW fd for the connection;
                                * the listener fd keeps listening (relocated onto a
-                               * free hardware socket with the same port). */
+                               * free hardware socket with the same port).
+                               * A peer that closed before this call reaches it is
+                               * still delivered (half-closed: readable, then EOF),
+                               * and any socket state that cannot serve as a
+                               * listener is re-opened rather than waited on. */
 int  wiztoe_connect(int fd, const uint8_t ip[4], uint16_t port);
 int  wiztoe_send(int fd, const void *buf, size_t len);
 int  wiztoe_recv(int fd, void *buf, size_t len);           /* 0 = EOF */
