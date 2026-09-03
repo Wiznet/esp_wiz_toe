@@ -102,6 +102,25 @@ int  wiztoe_accept(int fd);   /* BSD semantics: returns a NEW fd for the connect
                                * and any socket state that cannot serve as a
                                * listener is re-opened rather than waited on. */
 int  wiztoe_connect(int fd, const uint8_t ip[4], uint16_t port);
+
+/* Blocking behaviour of send/recv/recvfrom, in priority order:
+ *
+ *   O_NONBLOCK set            -> return WIZTOE_ERR_WOULDBLOCK immediately
+ *   WIZTOE_OPT_{RCV,SND}TIMEO -> wait at most that many milliseconds of real
+ *                                time, then WIZTOE_ERR_TIMEOUT (recv) or
+ *                                WIZTOE_ERR_WOULDBLOCK (send, POSIX EAGAIN
+ *                                for "blocked and sent nothing")
+ *   timeout 0 (the default)   -> wait forever, as POSIX defines a zero
+ *                                SO_RCVTIMEO/SO_SNDTIMEO and as ioLibrary
+ *                                behaves without SF_IO_NONBLOCK
+ *
+ * CONTRACT: the wait yields to other tasks but does NOT feed the calling task's
+ * watchdog. A blocking socket with no timeout must therefore be driven from a
+ * task of its own, never from a watchdog-supervised event loop -- there, set
+ * O_NONBLOCK or a timeout.
+ *
+ * send() may return less than `len`: the chip's TX buffer bounds one transfer,
+ * and POSIX allows a partial count once SO_SNDTIMEO has elapsed. */
 int  wiztoe_send(int fd, const void *buf, size_t len);
 int  wiztoe_recv(int fd, void *buf, size_t len);           /* 0 = EOF */
 

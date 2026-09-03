@@ -91,6 +91,25 @@ static uint8_t    g_tables_init;
 static void toe_tcp_disconnect_bounded(int fd);
 static int  toe_listener_rearm(int fd);
 
+/* Has `timeout_ms` of wall time passed since `started`?
+ *
+ * The waits below used to count loop iterations and treat one as a millisecond.
+ * They are not: toe_yield_1ms() lands on a tick boundary and each turn also
+ * costs two SPI register reads, so a 2 s SO_RCVTIMEO expired appreciably later
+ * than 2 s -- which matters, because 2 s is exactly what ESPHome's OTA asks for
+ * and the task watchdog is only 5 s.
+ *
+ * timeout_ms == 0 means "no timeout" at every layer involved -- POSIX for
+ * SO_RCVTIMEO/SO_SNDTIMEO, and ioLibrary when SF_IO_NONBLOCK is unset -- so it
+ * never expires here either. Unsigned subtraction, so the microsecond counter
+ * wrapping (~71 min) is harmless. */
+static int toe_deadline_passed(uint32_t started, uint32_t timeout_ms)
+{
+    if (timeout_ms == 0)
+        return 0;
+    return (uint32_t)(toe_time_us() - started) >= timeout_ms * 1000u;
+}
+
 /* Zero-initialised statics would read as "descriptor 0 owns every hardware
  * socket" and "every descriptor is bound to sn 0", so both tables need an
  * explicit first touch. Done lazily from the allocation entry points, which is
@@ -424,7 +443,7 @@ int wiztoe_accept(int fd)
     if (!toe_fd_valid(fd) || !g_desc[fd].listening)
         return -1;
 
-    uint32_t waited = 0;
+    const uint32_t started = toe_time_us();
     for (;;)
     {
         if (g_desc[fd].sn < 0)
@@ -484,7 +503,7 @@ int wiztoe_accept(int fd)
          * "nothing pending" rather than waiting for a client to show up. */
         if (g_desc[fd].nonblocking)
             return WIZTOE_ERR_WOULDBLOCK;
-        if (g_desc[fd].rcv_timeout_ms && ++waited >= g_desc[fd].rcv_timeout_ms)
+        if (toe_deadline_passed(started, g_desc[fd].rcv_timeout_ms))
             return WIZTOE_ERR_TIMEOUT;
         toe_yield_1ms();
     }
@@ -528,21 +547,51 @@ int wiztoe_send(int fd, const void *buf, size_t len)
 
     uint8_t sn = toe_sn(fd);
 
-    if (g_desc[fd].nonblocking)
+    /* Wait for room in the chip's TX buffer HERE rather than inside ioLibrary.
+     *
+     * ioLibrary's send() ends in `while (len > freesize)` (socket.c) with no
+     * timeout and -- unlike the receive path -- no yield either: a pure SPI
+     * busy-poll that only leaves when the socket stops being ESTABLISHED. So a
+     * peer that stops reading, or a link that dies, parks the caller there for
+     * as long as the chip keeps the connection. SO_SNDTIMEO was accepted and
+     * then ignored.
+     *
+     * Clamping len to the free space keeps send() on its `len <= freesize`
+     * path, where it returns without waiting. The non-blocking case already
+     * did this; the wait is now simply ours in every mode, which is what makes
+     * SO_SNDTIMEO mean something. */
+    const uint32_t started = toe_time_us();
+    uint16_t freesize;
+
+    for (;;)
     {
-        /* ioLibrary's send() spins in `while (len > freesize)` until the chip
-         * drains, which is exactly the wait a non-blocking caller forbade.
-         * Clamping to the free space keeps it on the `len <= freesize` path,
-         * where it returns without waiting, and a short write is what POSIX
-         * expects from a non-blocking stream send. */
-        uint16_t freesize = getSn_TX_FSR(sn);
-        if (freesize == 0)
+        uint8_t sr = getSn_SR(sn);
+        if (sr != SOCK_ESTABLISHED && sr != SOCK_CLOSE_WAIT)
+            return -1;                         /* connection gone */
+
+        freesize = getSn_TX_FSR(sn);
+        if (freesize > 0)
+            break;
+
+        if (g_desc[fd].nonblocking)
             return WIZTOE_ERR_WOULDBLOCK;
-        if (len > freesize)
-            len = freesize;
+        if (toe_deadline_passed(started, g_desc[fd].snd_timeout_ms))
+            return WIZTOE_ERR_WOULDBLOCK;      /* POSIX: nothing sent -> EAGAIN */
+        toe_yield_1ms();
     }
 
+    if (len > freesize)
+        len = freesize;                        /* short write; see below */
+
     int32_t n = send(sn, (uint8_t *)buf, (uint16_t)len);
+
+    /* SOCK_BUSY is 0 (socket.h), returned when a previous send has not been
+     * acknowledged by the chip yet. Passing that through would look like "sent
+     * zero bytes" to a POSIX caller, which is not a value send() may return for
+     * a non-empty buffer -- writeall_() style loops read it as no progress.
+     * It is a retry condition, so it is reported as one. */
+    if (n == SOCK_BUSY)
+        return WIZTOE_ERR_WOULDBLOCK;
     return (n < 0) ? -1 : (int)n;
 }
 
@@ -557,7 +606,7 @@ int wiztoe_recv(int fd, void *buf, size_t len)
         return 0;                              /* EOF after shutdown(SHUT_RD) */
 
     uint8_t sn = toe_sn(fd);
-    uint32_t waited = 0;
+    const uint32_t started = toe_time_us();
     for (;;)
     {
         if (getSn_RX_RSR(sn) > 0)
@@ -569,18 +618,12 @@ int wiztoe_recv(int fd, void *buf, size_t len)
          * the end of the stream. */
         if (g_desc[fd].nonblocking)
             return WIZTOE_ERR_WOULDBLOCK;
-        if (g_desc[fd].rcv_timeout_ms)
-        {
-            if (++waited >= g_desc[fd].rcv_timeout_ms)
-                return WIZTOE_ERR_TIMEOUT;
-            toe_yield_1ms();
-        }
-        else
-        {
-            /* No SO_RCVTIMEO: still yield (unlike the Pico busy-poll) so the
-             * ESP-IDF idle task / watchdog run. 1 ms tick (FREERTOS_HZ=1000). */
-            toe_yield_1ms();
-        }
+        if (toe_deadline_passed(started, g_desc[fd].rcv_timeout_ms))
+            return WIZTOE_ERR_TIMEOUT;
+        /* Yield rather than busy-poll (unlike the Pico original) so the idle
+         * task runs. With no SO_RCVTIMEO this waits forever, by POSIX -- see
+         * the contract note in wiznet_toe.h. */
+        toe_yield_1ms();
     }
 
     int32_t n = recv(sn, (uint8_t *)buf, (uint16_t)len);
@@ -619,7 +662,7 @@ int wiztoe_recvfrom(int fd, void *buf, size_t len, uint8_t ip[4], uint16_t *port
         len = 0xFFFF;
 
     uint8_t sn = toe_sn(fd);
-    uint32_t waited = 0;
+    const uint32_t started = toe_time_us();
     for (;;)
     {
         if (getSn_RX_RSR(sn) > 0)
@@ -628,7 +671,7 @@ int wiztoe_recvfrom(int fd, void *buf, size_t len, uint8_t ip[4], uint16_t *port
             return -1;
         if (g_desc[fd].nonblocking)
             return WIZTOE_ERR_WOULDBLOCK;
-        if (g_desc[fd].rcv_timeout_ms && ++waited >= g_desc[fd].rcv_timeout_ms)
+        if (toe_deadline_passed(started, g_desc[fd].rcv_timeout_ms))
             return WIZTOE_ERR_TIMEOUT;
         toe_yield_1ms();
     }
