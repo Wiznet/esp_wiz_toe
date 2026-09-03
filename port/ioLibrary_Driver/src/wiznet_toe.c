@@ -77,7 +77,18 @@ static toe_desc_t g_desc[WIZTOE_MAX_DESC];
 static int8_t     g_sn_owner[WIZTOE_MAX_SOCK];
 static uint8_t    g_tables_init;
 
-static void toe_tcp_disconnect_if_connected(int fd);
+/* How long close() may spend waiting for a graceful TCP shutdown before it
+ * gives up and tears the socket down locally.
+ *
+ * A FIN/ACK on a healthy LAN completes in well under a millisecond, so this is
+ * a safety net rather than a budget. It has to stay far below ESP-IDF's task
+ * watchdog (5 s by default), because this wait happens on whatever task called
+ * close() -- for ESPHome that is the main loop. */
+#ifndef WIZTOE_DISCONNECT_TIMEOUT_MS
+#define WIZTOE_DISCONNECT_TIMEOUT_MS 250u
+#endif
+
+static void toe_tcp_disconnect_bounded(int fd);
 static int  toe_listener_rearm(int fd);
 
 /* Zero-initialised statics would read as "descriptor 0 owns every hardware
@@ -284,7 +295,7 @@ int wiztoe_shutdown(int fd, int shut_rd, int shut_wr)
     {
         /* Send FIN so the peer observes EOF. The fd stays allocated -- freeing
          * it is close()'s job, and a half-closed socket must still be readable. */
-        toe_tcp_disconnect_if_connected(fd);
+        toe_tcp_disconnect_bounded(fd);
     }
 
     return 0;
@@ -702,12 +713,70 @@ void wiztoe_socket_release(int sn)
     }
 }
 
-static void toe_tcp_disconnect_if_connected(int fd)
+/* PHY link state, straight from the chip. Read through ioLibrary so this TU
+ * keeps its header isolation (it must not pull in ESP-IDF headers -- see the
+ * note in toe_port.h). */
+static int toe_link_is_up(void)
+{
+    uint8_t link = PHY_LINK_OFF;
+    if (ctlwizchip(CW_GET_PHYLINK, (void *)&link) < 0)
+        return 0;                              /* unreadable -> treat as down */
+    return link == PHY_LINK_ON;
+}
+
+/* Graceful TCP shutdown that is guaranteed to return.
+ *
+ * ioLibrary's disconnect() cannot be used here. It ends in
+ *
+ *     while (getSn_SR(sn) != SOCK_CLOSED)     socket.c:502
+ *
+ * whose only exits are the peer acknowledging our FIN and the chip's own
+ * retransmit timeout. Neither arrives while the cable is out: the FIN never
+ * leaves the chip, so the timeout does not advance either. Measured on hardware
+ * that spin held the caller for over 4 s and tripped the task watchdog, which
+ * rebooted the device on nothing worse than someone unplugging a cable. It
+ * takes no timeout argument, so it cannot be bounded from the outside -- the
+ * DISCON sequence is reproduced here with a wait we own.
+ *
+ * (ioLibrary's non-blocking escape at socket.c:499 is deliberately not used:
+ * it needs SF_IO_NONBLOCK in sock_io_mode, which is a global that also changes
+ * send/recv/connect semantics, and it only makes disconnect() return SOCK_BUSY
+ * -- handing the cleanup back to the caller rather than solving it.)
+ *
+ * The caller closes the socket afterwards either way, so every path here is
+ * free to give up: Sn_CR_CLOSE is chip-local and completes with the link down. */
+static void toe_tcp_disconnect_bounded(int fd)
 {
     uint8_t sn = toe_sn(fd);
     uint8_t sr = getSn_SR(sn);
-    if (sr == SOCK_ESTABLISHED || sr == SOCK_CLOSE_WAIT)
-        disconnect(sn);
+
+    if (sr != SOCK_ESTABLISHED && sr != SOCK_CLOSE_WAIT)
+        return;                                /* nothing to shut down politely */
+
+    /* Link already down: the FIN cannot be transmitted, so waiting for the
+     * peer to acknowledge it is waiting for something that cannot happen. */
+    if (!toe_link_is_up())
+        return;
+
+    setSn_CR(sn, Sn_CR_DISCON);
+    while (getSn_CR(sn));                      /* command latch: chip-local */
+
+    const uint32_t started = toe_time_us();
+    const uint32_t limit_us = WIZTOE_DISCONNECT_TIMEOUT_MS * 1000u;
+
+    for (;;)
+    {
+        if (getSn_SR(sn) == SOCK_CLOSED)
+            return;                            /* peer answered: clean close */
+        if (getSn_IR(sn) & Sn_IR_TIMEOUT)
+            return;                            /* chip gave up first */
+        /* Unsigned subtraction, so a wrap of the microsecond counter is fine. */
+        if ((uint32_t)(toe_time_us() - started) >= limit_us)
+            return;                            /* our own cap */
+        if (!toe_link_is_up())
+            return;                            /* cable pulled mid-handshake */
+        toe_yield_1ms();
+    }
 }
 
 int wiztoe_close(int fd)
@@ -722,7 +791,7 @@ int wiztoe_close(int fd)
     {
         uint8_t sn = toe_sn(fd);
         if (!g_desc[fd].is_udp)
-            toe_tcp_disconnect_if_connected(fd);
+            toe_tcp_disconnect_bounded(fd);
         if (g_desc[fd].opened)
             close(sn);
         toe_sn_release(sn);
