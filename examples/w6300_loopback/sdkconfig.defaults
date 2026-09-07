@@ -6,5 +6,7 @@ CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # Conservative bring-up clock; raise after verifying signal integrity on hardware.
 # --- wsm_driver shared settings (copied from loopback) ---
 CONFIG_WSM_DRIVER_ENABLED=y
-CONFIG_WSM_DRIVER_CHIP_W6300=y
-# pins/clock/QSPI come from the component Kconfig W6300 defaults
+# Board fixes the chip (W6300) and the SPI pins together; the chip is not
+# separately selectable unless the board is Custom.
+CONFIG_WSM_DRIVER_BOARD_W6300_DEVKIT=y
+# pins/clock/QSPI come from the board selected above

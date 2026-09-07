@@ -1,11 +1,13 @@
 menu "WIZnet WSM Driver"
 
 #
-# Only three things are user-selectable here: the chip, the W6300 QSPI mode,
-# and the per-socket buffer sizes. All SPI wiring (pins / host / clock) is
-# derived from the chip and hidden from menuconfig -- see the per-chip blocks
-# at the bottom. Symbol names are the same for both chips (the port/example
-# code reads CONFIG_WSM_DRIVER_PIN_*); only the values differ.
+# Only three things are user-selectable here: the board, the W6300 QSPI mode,
+# and the per-socket buffer sizes. The chip and all SPI wiring (pins / host /
+# clock) are derived from the board and hidden from menuconfig -- see the
+# per-chip blocks at the bottom. Board -> Custom is the single exception: it
+# opens up the chip and the pins for self-designed hardware. Symbol names are
+# the same for both chips (the port/example code reads CONFIG_WSM_DRIVER_PIN_*);
+# only the values differ.
 #
 
 config WSM_DRIVER_ENABLED
@@ -43,20 +45,22 @@ config WSM_DRIVER_BOARD_CUSTOM
 endchoice
 
 # =============================================================================
-# Chip -- defaults to the board's chip, but stays directly settable
+# Chip -- forced by the board; user-settable on Custom only
 # =============================================================================
 # A choice member cannot be the target of `select`, so the chip is a plain bool
 # whose default follows the board rather than something the board selects.
 # The symbol names are unchanged, so no .c source has to know boards exist.
 #
-# The prompt is deliberately NOT gated on Custom: setting the chip alone, with no
-# board named, is the long-standing way to configure this component and is what
-# every example's sdkconfig.defaults still does. A hidden symbol cannot take a
-# user value at all -- kconfgen drops it with "not visible (disabled dependency)"
-# -- so gating it here would silently build every W6300 example as a W5500.
-# Naming a board remains the way to pick a non-reference pinout (the W6300 SoM).
+# The prompt is gated on Custom because every named board carries exactly one
+# chip: offering the checkbox there would only let a config contradict its own
+# board, which is how a "Board: ESP32-W5500-Dev-kit" plus an enabled W6300 used
+# to show up in menuconfig. With no prompt the symbol can only take the defaults
+# below, so the board decides -- and a value set from sdkconfig or
+# sdkconfig.defaults is dropped ("not visible (disabled dependency)"). A config
+# that used to name the chip directly must name its board instead:
+#     CONFIG_WSM_DRIVER_CHIP_W6300=y -> CONFIG_WSM_DRIVER_BOARD_W6300_DEVKIT=y
 config WSM_DRIVER_CHIP_W6300
-    bool "W6300"
+    bool "W6300" if WSM_DRIVER_BOARD_CUSTOM
     default y if WSM_DRIVER_BOARD_W6300_DEVKIT
     default y if WSM_DRIVER_BOARD_W6300_SOM
 
@@ -157,10 +161,9 @@ config WSM_DRIVER_SOCKET_WRAP
 #
 # Defaults key on the CHIP first, and on the board only where a board deviates
 # from its chip's reference wiring (currently just the W6300 SoM). Keying on the
-# board alone would break any config that sets the chip directly without naming a
-# board -- which is what every example's sdkconfig.defaults does -- because the
-# board choice always holds a value (it defaults to the W5500 Dev-kit), so a
-# board-conditional default would always win over the chip the caller asked for.
+# chip also covers Board -> Custom, where the chip is the only thing the user has
+# stated: a custom board then starts from that chip's reference wiring instead of
+# from nothing.
 #
 # The prompt is gated on Custom, so a fixed board shows read-only derived values
 # and only self-designed hardware exposes editable pins. The trailing bare

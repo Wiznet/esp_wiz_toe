@@ -18,7 +18,7 @@ A PPPoE server / access concentrator is also required (for example an ISP DSL mo
 
 ## Step 3: Setup PPPoE Example
 
-> **This example is W5500 only.** The vendored PPPoE driver uses W5500 PPPoE registers that do not exist on the W6300, and the example will fail to compile (`#error`) on any other chip. The shipped `sdkconfig.defaults` selects **W6300** (`CONFIG_WSM_DRIVER_CHIP_W6300=y`), so you **must change the chip to W5500** under `Component config -> WIZnet WSM Driver -> WIZnet chip` before building.
+> **This example is W5500 only.** The vendored PPPoE driver uses W5500 PPPoE registers that do not exist on the W6300, and the example will fail to compile (`#error`) on any other chip. The shipped `sdkconfig.defaults` names the W5500 board explicitly (`CONFIG_WSM_DRIVER_BOARD_W5500_DEVKIT=y`), so it builds as shipped -- just **do not switch to a W6300 board** under `Component config -> WIZnet WSM Driver -> Board`.
 
 ### Chip and SPI configuration
 
@@ -35,7 +35,7 @@ Select **Component config**.
 Select **WIZnet WSM Driver** under Component config.
 ![][link-config_component]
 
-Choose **W5500** as the WIZnet chip, and check the per-socket buffer size. SPI host, clock, and pins follow the selected chip automatically. In this example, SPI2 of the ESP32-S3 is used at 33 MHz.
+Keep an **ESP32-W5500** board selected, and check the per-socket buffer size. The chip, SPI host, clock, and pins all follow the selected board automatically. In this example, SPI2 of the ESP32-S3 is used at 33 MHz.
 ![][link-config_wiz_toe]
 
 **W5500 wiring (standard SPI)**
@@ -137,7 +137,7 @@ If the session cannot be established (wrong credentials, no PPPoE server reachab
 
 - **Credentials must be real:** the built-in `W5100S` / `WIZnet` values are placeholders. PAP/CHAP authentication will fail unless `pppoe_id` / `pppoe_pw` (and their length fields) match an account configured on your PPPoE server.
 - **Retry behavior:** `ppp_start()` is retried in a loop until it succeeds or `pppoe_retry_count` exceeds `PPP_MAX_RETRY_COUNT`, after which the example reports `PPPoE Failed`.
-- **W5500 only:** porting to W6300 would require rewriting the PPPoE register access in the vendored `PPPoE.c` (W6300 uses a different register map: PSIDR/PHAR/NETMR2). Do not select W6300 for this example.
+- **W5500 only:** porting to W6300 would require rewriting the PPPoE register access in the vendored `PPPoE.c` (W6300 uses a different register map: PSIDR/PHAR/NETMR2). Do not select a W6300 board for this example.
 
 <!-- Link -->
 [link-tera_term]: https://osdn.net/projects/ttssh2/releases/

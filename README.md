@@ -49,7 +49,7 @@ ESP32-S3 SPI master in half-duplex mode.
 - **Quad mode**: requires two extra data lines (IO2/IO3) wired to the chip and
   selected via `Component config -> WIZnet WSM Driver -> W6300 QSPI mode`.
 
-Select the chip in menuconfig: `Component config -> WIZnet WSM Driver -> WIZnet chip -> W6300`.
+Select a W6300 board in menuconfig: `Component config -> WIZnet WSM Driver -> Board -> ESP32-W6300-Dev-kit` (or `ESP32-W6300-SoM`). The board is what picks the chip; the chip itself is only separately selectable on `Board -> Custom`.
 
 ## Network backend
 
@@ -163,14 +163,19 @@ cd examples/loopback
 idf.py build
 ```
 
-Chip, SPI host/clock/pin defaults and per-socket RX/TX buffer size can be
-changed in menuconfig:
+The board and the per-socket RX/TX buffer size can be changed in menuconfig:
 
-- `Component config -> WIZnet WSM Driver -> WIZnet chip -> W5500`
+- `Component config -> WIZnet WSM Driver -> Board` (default: `ESP32-W5500-Dev-kit`)
+- `Component config -> WIZnet WSM Driver -> Per-socket RX/TX buffer size (KB)`
+
+The board decides the chip and the SPI host/clock/pins together, so those are derived and shown
+read-only. Self-designed hardware picks `Board -> Custom`, which opens up the chip and the
+GPIO/host/clock fields:
+
+- `Component config -> WIZnet WSM Driver -> W6300` (chip; Custom only)
 - `Component config -> WIZnet WSM Driver -> SPI host (2=SPI2, 3=SPI3)`
 - `Component config -> WIZnet WSM Driver -> SPI clock (Hz)`
 - `Component config -> WIZnet WSM Driver -> GPIO: MISO/MOSI/SCLK/CS/RESET/INT`
-- `Component config -> WIZnet WSM Driver -> Per-socket RX/TX buffer size (KB)`
 
 Example-specific endpoint values (static IP, ports, peer address) are kept in the
 example sources for simplicity, not in menuconfig:

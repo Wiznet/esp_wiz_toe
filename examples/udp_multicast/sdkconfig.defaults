@@ -9,12 +9,14 @@ CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # CONFIG_COMPILER_OPTIMIZATION_DEBUG is not set
 # --- wsm_driver shared settings ---
 CONFIG_WSM_DRIVER_ENABLED=y
-CONFIG_WSM_DRIVER_CHIP_W6300=y
+# Board = ESP32-W5500-Dev-kit, the component Kconfig default. The board fixes
+# both the chip and the SPI pins; pick another one in menuconfig:
+#   Component config -> WIZnet WSM Driver -> Board
 CONFIG_WSM_DRIVER_BACKEND_TOE=y
-# pins/clock/QSPI come from the component Kconfig W6300 defaults. Those symbols
-# have no prompt (hidden), so they CANNOT be overridden from here or from
+# pins/clock come from the board selected above. Those symbols have no prompt
+# unless the board is Custom, so they CANNOT be overridden from here or from
 # sdkconfig -- kconfgen always regenerates them from their `default`. To rewire,
-# edit the W6300 block in the component Kconfig.
+# pick Board -> Custom, or edit the SPI wiring block in the component Kconfig.
 # --- LwIP: the Wi-Fi side needs IGMP to join a group; off by default in some
 #     configs, so pin it. The TOE side filters in chip hardware regardless. ---
 CONFIG_LWIP_IGMP=y

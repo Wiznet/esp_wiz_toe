@@ -22,9 +22,11 @@ CONFIG_COMPILER_DISABLE_DEFAULT_ERRORS=y
 CONFIG_LWIP_MAX_SOCKETS=16
 # --- wsm_driver shared settings (copied from loopback) ---
 CONFIG_WSM_DRIVER_ENABLED=y
-CONFIG_WSM_DRIVER_CHIP_W6300=y
+# Board = ESP32-W5500-Dev-kit, the component Kconfig default. The board fixes
+# both the chip and the SPI pins; pick another one in menuconfig:
+#   Component config -> WIZnet WSM Driver -> Board
 CONFIG_WSM_DRIVER_BACKEND_TOE=y
-# pins/clock/QSPI come from the component Kconfig W6300 defaults
+# pins/clock come from the board selected above
 # Route BSD sockets to the WIZnet TOE hardware sockets (builds wiznet_toe.c /
 # wiztoe_wrap.c and adds the lwIP --wrap glue).
 CONFIG_WSM_DRIVER_SOCKET_WRAP=y
