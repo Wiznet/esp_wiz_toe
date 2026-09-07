@@ -10,13 +10,13 @@ CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # gitignored, so without pinning it here the result depends on which IDF version
 # happened to generate it first.
 CONFIG_COMPILER_DISABLE_DEFAULT_ERRORS=y
-# WIZnet chip defaults to W5500; switch to W6300 in menuconfig:
-#   Component config -> WIZnet WSM Driver -> WIZnet chip
 # --- wsm_driver shared settings (copied from loopback) ---
 CONFIG_WSM_DRIVER_ENABLED=y
-CONFIG_WSM_DRIVER_CHIP_W6300=y
+# Board = ESP32-W5500-Dev-kit, the component Kconfig default. The board fixes
+# both the chip and the SPI pins; pick another one in menuconfig:
+#   Component config -> WIZnet WSM Driver -> Board
 CONFIG_WSM_DRIVER_BACKEND_TOE=y
-# pins/clock/QSPI come from the component Kconfig W6300 defaults
+# pins/clock come from the board selected above
 # No BSD sockets here: this example only reads the chip's PHY registers, so the
 # lwIP --wrap glue (and the ioLibrary close() rename it brings) is not needed.
 CONFIG_WSM_DRIVER_SOCKET_WRAP=n

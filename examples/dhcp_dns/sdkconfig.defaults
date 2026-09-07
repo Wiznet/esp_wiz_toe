@@ -3,13 +3,13 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # CONFIG_COMPILER_OPTIMIZATION_DEBUG is not set
-# WIZnet chip defaults to W5500; switch to W6300 in menuconfig:
-#   Component config -> WIZnet WSM Driver -> WIZnet chip
 # --- wsm_driver shared settings (copied from loopback) ---
 CONFIG_WSM_DRIVER_ENABLED=y
-CONFIG_WSM_DRIVER_CHIP_W6300=y
+# Board = ESP32-W5500-Dev-kit, the component Kconfig default. The board fixes
+# both the chip and the SPI pins; pick another one in menuconfig:
+#   Component config -> WIZnet WSM Driver -> Board
 CONFIG_WSM_DRIVER_BACKEND_TOE=y
-# pins/clock/QSPI come from the component Kconfig W6300 defaults
+# pins/clock come from the board selected above
 # Switch to CONFIG_WSM_DRIVER_BACKEND_ETH=y to run the chip as an esp_eth
 # MACRAW MAC; the Ethernet vtable then uses esp_netif DHCP + the LwIP resolver
 # instead of the ioLibrary clients (see src/eth_dhcp_dns.c).

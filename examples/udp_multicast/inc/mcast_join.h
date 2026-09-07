@@ -47,7 +47,8 @@ int mcast_join_toe(const void *ops, int fd, const char *group, uint16_t port);
 
 /*
  * LWIP_SOCKET_OFFSET, which mcast_join_toe() has to subtract from an fd to get
- * the chip's socket number.
+ * the driver's descriptor index. That index is NOT the chip's socket number;
+ * mcast_join_toe() asks wiztoe_sn_of_fd() for that.
  *
  * It lives behind a function because the macro is only reachable through lwIP
  * headers, and those cannot be included next to ioLibrary's socket.h -- both

@@ -18,5 +18,5 @@ const net_sock_ops_t net_eth_ops = {
     .connect = lwip_connect, .recv = lwip_recv,
     .send = lwip_send,       .recvfrom = lwip_recvfrom,
     .sendto = lwip_sendto,   .setsockopt = lwip_setsockopt,
-    .close = lwip_close,
+    .close = lwip_close,     .fcntl = lwip_fcntl,
 };

@@ -32,10 +32,10 @@ Select **Component config**.
 Select **WIZnet WSM Driver** under Component config.
 ![][link-config_component]
 
-Check the per-socket buffer size. The SPI host, clock, and pins follow the W6300 automatically. In this example, SPI2 of the ESP32-S3 is used at 33 MHz.
+Check the per-socket buffer size. The chip, SPI host, clock, and pins all follow the selected board automatically. In this example, SPI2 of the ESP32-S3 is used at 33 MHz.
 ![][link-config_wiz_toe]
 
-> This example is **pinned to the W6300** chip (`sdkconfig.defaults` sets `CONFIG_WSM_DRIVER_CHIP_W6300=y`). Leave the chip fixed to W6300 under `Component config -> WIZnet WSM Driver -> WIZnet chip`. You can choose between **Single** and **Quad** SPI mode under `Component config -> WIZnet WSM Driver -> W6300 QSPI mode`.
+> This example is **pinned to the ESP32-W6300-Dev-kit** board (`sdkconfig.defaults` sets `CONFIG_WSM_DRIVER_BOARD_W6300_DEVKIT=y`), which is what selects the W6300 chip. Leave the board as it is under `Component config -> WIZnet WSM Driver -> Board`. You can choose between **Single** and **Quad** SPI mode under `Component config -> WIZnet WSM Driver -> W6300 QSPI mode`.
 
 **W6300 wiring (QSPI)**
 

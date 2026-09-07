@@ -34,10 +34,10 @@ Select **Component config**.
 Select **WIZnet WSM Driver** under Component config.
 ![][link-config_component]
 
-Choose the WIZnet chip, and check the per-socket buffer size. SPI host, clock, and pins follow the selected chip automatically. In this example, SPI2 of the ESP32-S3 is used at 33 MHz.
+Choose the board, and check the per-socket buffer size. The chip, SPI host, clock, and pins all follow the selected board automatically. In this example, SPI2 of the ESP32-S3 is used at 33 MHz.
 ![][link-config_wiz_toe]
 
-> This example ships with **W6300** selected by default (`sdkconfig.defaults`). Switch to W5500 under `Component config -> WIZnet WSM Driver -> WIZnet chip` if needed.
+> This example ships with the **ESP32-W5500-Dev-kit** board, which is the component Kconfig default -- `sdkconfig.defaults` no longer names a chip. Pick a different board under `Component config -> WIZnet WSM Driver -> Board`: the board fixes the chip and the SPI pins together, and the chip is separately selectable only on `Board -> Custom`.
 
 **W5500 wiring (standard SPI)**
 
@@ -134,19 +134,29 @@ That was in this file until a W5500 run found it. On a UART console the stray cl
 
 ### The one non-standard thing in this example
 
-`mcast_join_toe()` is handed a BSD `fd` and needs the chip's socket number, so it relies on the mapping the component's `--wrap` layer applies:
+`mcast_join_toe()` is handed a BSD `fd` and needs the chip's socket number. It used to derive one from the other arithmetically:
 
 ```
-fd == hardware socket number + LWIP_SOCKET_OFFSET
+fd == hardware socket number + LWIP_SOCKET_OFFSET     // no longer true
 ```
 
-That is an internal rule of `wsm_driver`, not a published contract, and it holds **only when `WSM_DRIVER_SOCKET_WRAP` is enabled**. With the esp_eth backend the same vtable is software LwIP: `fd` is a genuine LwIP socket and there is no hardware socket behind it, so `fd - LWIP_SOCKET_OFFSET` would be a number with no meaning. That is what the `#if` in `main.c` is for.
+That was an internal rule of `wsm_driver`, never a published contract, and it **no longer holds**. Since `accept()` gained BSD semantics a listener hands its hardware socket to the accepted connection and relocates onto a free one, so descriptors and chip sockets drift apart; a raw socket reserved for ioLibrary's `DHCP_run()` shifts them too. The subtraction would still compile and would quietly address someone else's socket.
 
-If the rule ever changes the file keeps compiling and starts writing to the wrong socket, so it checks before touching anything. `bind()` has just opened this socket for UDP, so the chip must agree it is in `SOCK_UDP`:
+So the driver is asked instead:
+
+```c
+int sn = wiztoe_sn_of_fd(fd - mcast_lwip_socket_offset());
+```
+
+`wiztoe_sn_of_fd()` returns the hardware socket currently behind a descriptor, or -1 when there is none. The value is valid only until the next call that can move sockets around (`accept`, `close`, `listen`), so it is read immediately before use and never cached.
+
+This whole path holds **only when `WSM_DRIVER_SOCKET_WRAP` is enabled**. With the esp_eth backend the same vtable is software LwIP: `fd` is a genuine LwIP socket with no hardware socket behind it at all, and `wiznet_toe.c` is not even built. That is what the `#if` in `main.c` is for.
+
+The answer is still checked against the chip before anything is written. `bind()` has just opened this socket for UDP, so the chip must agree it is in `SOCK_UDP`:
 
 ```
 E (xxx) mcast_join: socket N is not open for UDP (Sn_SR=0x..) — refusing to
-        reopen it; the fd mapping looks wrong
+        reopen it; it is not the socket behind this fd
 ```
 
 Losing multicast is a far better outcome than silently reopening someone else's socket.

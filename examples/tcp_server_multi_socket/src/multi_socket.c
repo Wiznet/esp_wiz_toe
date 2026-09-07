@@ -40,6 +40,33 @@ const multi_socket_ops_t multi_socket_lwip_ops = {
     .close = lwip_close,
 };
 
+/* Write the whole buffer, tolerating a short write.
+ *
+ * EAGAIN/EWOULDBLOCK from a BLOCKING send() is not an error and must not end
+ * the connection. On the TOE it means the chip has not yet acknowledged the
+ * previous transmission (SOCK_BUSY); on LwIP a socket with SO_SNDTIMEO set
+ * reports an elapsed timeout the same way. Both are "try again in a moment".
+ *
+ * Returns true when every byte went out. */
+static bool send_all(const multi_socket_ops_t *ops, int fd,
+                     const uint8_t *buf, int len)
+{
+    int off = 0;
+    while (off < len) {
+        int sent = ops->send(fd, buf + off, len - off, 0);
+        if (sent > 0) {
+            off += sent;
+            continue;
+        }
+        if (sent < 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
+            vTaskDelay(1);              /* let the chip drain, then retry */
+            continue;
+        }
+        return false;                   /* 0 = peer gone, <0 = real error */
+    }
+    return true;
+}
+
 /* --------------------------------------------------------------------------
  * Per-listener echo task
  * ------------------------------------------------------------------------ */
@@ -99,13 +126,8 @@ static void worker_task(void *arg)
             }
             buf[n] = 0x00;
 
-            int off = 0;
-            while (off < n) {                  /* echo back, handle partial sends */
-                int sent = ops->send(c, buf + off, n - off, 0);
-                if (sent < 0) {
-                    break;
-                }
-                off += sent;
+            if (!send_all(ops, c, buf, n)) {   /* echo back */
+                break;
             }
             ESP_LOGI(TAG, "[%s#%d] port %u message:%s",
                      w->name, w->index, (unsigned)w->port, (char *)buf);
@@ -113,10 +135,9 @@ static void worker_task(void *arg)
 
         log_peer(w->name, w->index, "disconnected", &src);
 
-        /* On the TOE, accept() returns the listener fd itself and close()
-         * re-arms it for the next client (see wiztoe_close); on plain LwIP this
-         * closes the accepted connection and the listener stays open. Either
-         * way the loop goes straight back to accept(). */
+        /* Closes the accepted connection only; w->lfd keeps listening on both
+         * backends. On the TOE this also returns a hardware socket to the pool,
+         * which is what lets a listener still waiting for one arm itself. */
         ops->close(c);
     }
 }

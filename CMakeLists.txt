@@ -58,7 +58,10 @@ else()
         # Opt-in BSD-socket integration: neutral TOE API + lwIP --wrap glue.
         list(APPEND WSM_DRIVER_SRCS
             "port/ioLibrary_Driver/src/wiznet_toe.c"
-            "port/ioLibrary_Driver/src/wiztoe_wrap.c")
+            "port/ioLibrary_Driver/src/wiztoe_wrap.c"
+            # DHCP/DNS over the BSD socket vtable. Needs the wrap: its sockets
+            # are ordinary lwip_* calls that must land on the TOE allocator.
+            "port/backend/src/wsm_dhcp.c")
     endif()
 endif()
 
@@ -72,16 +75,22 @@ idf_component_register(
         "include"
     PRIV_INCLUDE_DIRS
         # "port/backend/inc"
+        # wiznet_toe.h used to live here. It moved to include/ because a caller
+        # outside the component legitimately needs wiztoe_sn_of_fd() -- see the
+        # note in that header. What stays private is the transport/eth glue.
         "port/ioLibrary_Driver/inc"
     REQUIRES
         esp_driver_spi
         esp_driver_gpio
+        # Public: include/esp_eth_{mac,phy}_{w5500,w6300}.h include esp_eth's own
+        # public headers (esp_eth_com.h / esp_eth_mac_spi.h / esp_eth_phy.h), so
+        # consumers of those headers need esp_eth on their include path too.
+        esp_eth
     PRIV_REQUIRES
         esp_netif
         esp_event
         esp_timer
         lwip
-        esp_eth
         esp_wifi
         nvs_flash
         driver
@@ -226,9 +235,17 @@ if(CONFIG_WSM_DRIVER_SOCKET_WRAP)
     # Intercept lwIP's BSD socket entry points at link time -> wiztoe_wrap.c.
     # INTERFACE so the flags reach the final executable link; -u forces the
     # __wrap_* symbols to be kept even if only referenced through the wrap.
+    # read/write/readv/writev/fcntl/shutdown/getpeername are as much a part of the
+    # BSD socket vocabulary as recv/send. Without them those calls reach the real
+    # lwIP, which holds no socket for a TOE fd, and fail with EBADF at run time
+    # only -- the build stays clean, which makes it the worst kind of gap.
+    # lwip_ioctl is deliberately absent: no confirmed caller needs it yet, and
+    # wiztoe_available() is ready if FIONREAD ever does.
     set(WRAP_FNS lwip_socket lwip_bind lwip_listen lwip_accept lwip_connect
                  lwip_send lwip_recv lwip_recvfrom lwip_sendto
-                 lwip_setsockopt lwip_getsockopt lwip_getsockname lwip_close)
+                 lwip_setsockopt lwip_getsockopt lwip_getsockname lwip_close
+                 lwip_read lwip_write lwip_readv lwip_writev
+                 lwip_fcntl lwip_shutdown lwip_getpeername)
     foreach(fn ${WRAP_FNS})
         target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=${fn}")
         target_link_libraries(${COMPONENT_LIB} INTERFACE "-u __wrap_${fn}")

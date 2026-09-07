@@ -111,6 +111,7 @@ uint32_t toe_time_us(void) { return (uint32_t)esp_timer_get_time(); }
 typedef struct {
     bool initialized;
     bool cs_active;
+    bool bus_owned;        /* true only if we called spi_bus_initialize() ourselves */
     spi_device_handle_t spi_dev;
     SemaphoreHandle_t lock;
     wsm_driver_spi_config_t cfg;
@@ -397,7 +398,16 @@ esp_err_t wsm_driver_spi_init(const wsm_driver_spi_config_t *cfg)
     buscfg.flags = SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_QUAD;
 #endif
 #endif
-    ESP_GOTO_ON_ERROR(spi_bus_initialize(s_ctx.cfg.host_id, &buscfg, SPI_DMA_CH_AUTO), err, TAG, "spi_bus_initialize failed");
+    // Bus ownership is declared by the caller (see wsm_driver_spi_config_t).
+    // When the application already initialized the bus we only add our device,
+    // and we must not free the bus on deinit either.
+    if (!s_ctx.cfg.bus_initialized_by_caller) {
+        ESP_GOTO_ON_ERROR(spi_bus_initialize(s_ctx.cfg.host_id, &buscfg, SPI_DMA_CH_AUTO), err, TAG,
+                          "spi_bus_initialize failed");
+        s_ctx.bus_owned = true;
+    } else {
+        ESP_LOGD(TAG, "using caller-initialized SPI bus host=%d", (int)s_ctx.cfg.host_id);
+    }
 
     spi_device_interface_config_t devcfg = {
         .mode = 0,
@@ -442,7 +452,9 @@ err_dev:
     (void)spi_bus_remove_device(s_ctx.spi_dev);
     s_ctx.spi_dev = NULL;
 err_bus:
-    (void)spi_bus_free(s_ctx.cfg.host_id);
+    if (s_ctx.bus_owned) {
+        (void)spi_bus_free(s_ctx.cfg.host_id);
+    }
 err:
     vSemaphoreDelete(s_ctx.lock);
     s_ctx.lock = NULL;
@@ -460,7 +472,10 @@ esp_err_t wsm_driver_spi_deinit(void)
         (void)spi_bus_remove_device(s_ctx.spi_dev);
         s_ctx.spi_dev = NULL;
     }
-    (void)spi_bus_free(s_ctx.cfg.host_id);
+    /* Only release a bus we created; a caller-owned bus outlives this driver. */
+    if (s_ctx.bus_owned) {
+        (void)spi_bus_free(s_ctx.cfg.host_id);
+    }
 
     if (s_ctx.lock != NULL) {
         vSemaphoreDelete(s_ctx.lock);

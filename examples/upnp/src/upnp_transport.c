@@ -11,6 +11,8 @@
 #include <errno.h>
 #include <string.h>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"    /* vTaskDelay in the send retry */
 #include "esp_log.h"
 #include "lwip/sockets.h"
 #include "lwip/inet.h"
@@ -25,6 +27,30 @@ static const net_sock_ops_t *s_ops;
 void upnp_transport_bind(const void *ops)
 {
     s_ops = (const net_sock_ops_t *)ops;
+}
+
+/* A blocking send() that reports EAGAIN/EWOULDBLOCK has not failed: the TOE
+ * says this while the chip has an unacknowledged transmission in flight
+ * (SOCK_BUSY), and LwIP says it for an elapsed SO_SNDTIMEO. Both want a
+ * retry, so a request is not abandoned over a condition that clears itself.
+ *
+ * Returns the number of bytes written, or -1 on a genuine failure. */
+static int send_all(int fd, const char *buf, size_t len)
+{
+    size_t sent = 0;
+    while (sent < len) {
+        int n = s_ops->send(fd, buf + sent, len - sent, 0);
+        if (n > 0) {
+            sent += (size_t)n;
+            continue;
+        }
+        if (n < 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
+            vTaskDelay(1);
+            continue;
+        }
+        return -1;                      /* 0 = peer gone, <0 = real error */
+    }
+    return (int)sent;
 }
 
 static int set_timeout(int fd, uint32_t ms)
@@ -122,16 +148,10 @@ int upnp_transport_http(const char *ip, uint16_t port, const char *request,
     }
     set_timeout(fd, timeout_ms);
 
-    size_t len = strlen(request), sent = 0;
-    while (sent < len) {
-        int n = s_ops->send(fd, request + sent, len - sent, 0);
-        if (n <= 0) {
-            ESP_LOGE(TAG, "send failed after %u bytes: errno %d",
-                     (unsigned)sent, errno);
-            s_ops->close(fd);
-            return -1;
-        }
-        sent += n;
+    if (send_all(fd, request, strlen(request)) < 0) {
+        ESP_LOGE(TAG, "send failed: errno %d", errno);
+        s_ops->close(fd);
+        return -1;
     }
 
     /* Read until the router closes the connection. UPnP answers are a few KB
@@ -185,7 +205,7 @@ int upnp_transport_accept(int listen_fd, uint32_t timeout_ms)
     socklen_t sl = sizeof(peer);
     int fd = s_ops->accept(listen_fd, (struct sockaddr *)&peer, &sl);
     if (fd < 0) {
-        return 0;                       /* nothing connected in time */
+        return -1;                      /* nothing connected in time */
     }
     ESP_LOGI(TAG, "eventing connection from %s", inet_ntoa(peer.sin_addr));
     return fd;
@@ -205,15 +225,7 @@ int upnp_transport_recv(int fd, char *buf, size_t size, uint32_t timeout_ms)
 
 int upnp_transport_send(int fd, const char *buf, size_t len)
 {
-    size_t sent = 0;
-    while (sent < len) {
-        int n = s_ops->send(fd, buf + sent, len - sent, 0);
-        if (n <= 0) {
-            return -1;
-        }
-        sent += n;
-    }
-    return (int)sent;
+    return send_all(fd, buf, len);
 }
 
 void upnp_transport_close(int fd)

@@ -17,8 +17,10 @@
 /* Block the calling task ~1 ms (FreeRTOS vTaskDelay), yielding to others. */
 void toe_yield_1ms(void);
 
-/* Free-running microsecond counter (esp_timer), used only for ephemeral-port
- * randomization in wiztoe_connect(). */
+/* Free-running microsecond counter (esp_timer). Used to randomize the ephemeral
+ * port in wiztoe_connect(), and to bound the graceful-shutdown wait in close()
+ * so a dead link cannot stall the calling task. Wraps roughly every 71 minutes;
+ * callers must compare with unsigned subtraction. */
 uint32_t toe_time_us(void);
 
 #endif /* TOE_PORT_H */

@@ -5,21 +5,21 @@ CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # CONFIG_COMPILER_OPTIMIZATION_DEBUG is not set
 # Keep default warnings as warnings. ESP-IDF flipped this Kconfig default in 6.0
 # (y in 5.5 -> n in 6.0). With it off the build uses -Werror instead of
-# -Werror=all, so warnings outside -Wall become errors too. This example needs it
-# most: it is the only one selecting W5500, whose w5500.h defines MR, colliding
-# with Xtensa specreg.h's MR. sdkconfig is gitignored, so without pinning it here
-# the result depends on which IDF version happened to generate it first.
+# -Werror=all, so warnings outside -Wall become errors too -- W5500's w5500.h
+# defines MR, which collides with Xtensa specreg.h's MR. sdkconfig is gitignored,
+# so without pinning it here the result depends on which IDF version happened to
+# generate it first.
 CONFIG_COMPILER_DISABLE_DEFAULT_ERRORS=y
 # --- wsm_driver shared settings (copied from loopback) ---
 CONFIG_WSM_DRIVER_ENABLED=y
 # W5500 ONLY. The vendored PPPoE.c drives the W5100S/W5500 PPPoE registers
 # (getMR/getPSID/...), which the W6300 does not have -- it exposes PPPoE through
-# a different register map (PSIDR/PHAR/NETMR2). Selecting W6300 here trips the
-# #error in src/pppoe_session.c, which is what used to happen with the shared
-# W6300 default copied from the other examples.
-CONFIG_WSM_DRIVER_CHIP_W5500=y
+# a different register map (PSIDR/PHAR/NETMR2). Picking a W6300 board trips the
+# #error in src/pppoe_session.c. Named here rather than left to the Kconfig
+# default (which is this same board) so the requirement is explicit.
+CONFIG_WSM_DRIVER_BOARD_W5500_DEVKIT=y
 CONFIG_WSM_DRIVER_BACKEND_TOE=y
-# pins/clock come from the component Kconfig W5500 defaults
+# pins/clock come from the board selected above
 # No BSD sockets here: PPPoE is negotiated through the chip's own registers, so
 # the lwIP --wrap glue (and the ioLibrary close() rename it brings) is not needed.
 CONFIG_WSM_DRIVER_SOCKET_WRAP=n

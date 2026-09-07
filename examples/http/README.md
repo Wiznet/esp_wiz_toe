@@ -32,10 +32,10 @@ Select **Component config**.
 Select **WIZnet WSM Driver** under Component config.
 ![][link-config_component]
 
-Choose the WIZnet chip, and check the per-socket buffer size. SPI host, clock, and pins follow the selected chip automatically. In this example, SPI2 of the ESP32-S3 is used at 33 MHz.
+Choose the board, and check the per-socket buffer size. The chip, SPI host, clock, and pins all follow the selected board automatically. In this example, SPI2 of the ESP32-S3 is used at 33 MHz.
 ![][link-config_wiz_toe]
 
-> This example ships with **W6300** selected by default (`sdkconfig.defaults`). Switch to W5500 under `Component config -> WIZnet WSM Driver -> WIZnet chip` if needed.
+> This example ships with the **ESP32-W5500-Dev-kit** board, which is the component Kconfig default -- `sdkconfig.defaults` no longer names a chip. Pick a different board under `Component config -> WIZnet WSM Driver -> Board`: the board fixes the chip and the SPI pins together, and the chip is separately selectable only on `Board -> Custom`.
 
 **W5500 wiring (standard SPI)**
 
@@ -199,7 +199,7 @@ I (xxxxx) http: [eth] GET /favicon.ico
 
 ## Appendix
 
-- **One connection at a time:** Each interface runs a single listener and serves connections sequentially, closing after every response (`Connection: close`). This matches the WIZnet hardware sockets, where `accept()` returns the *same* socket it listened on and `close()` re-arms it — a second connection cannot be accepted while the first is open. The ioLibrary version spread `httpServer_run()` across 4 hardware sockets instead; running several listeners on one port is not portable to the software LwIP backend, where `bind()` would clash.
+- **One connection at a time:** Each interface runs a single listener and serves connections sequentially, closing after every response (`Connection: close`). That is a choice this example makes to keep the engine small, not a limit of the chip: `accept()` has BSD semantics on the hardware sockets too, so the listener survives each connection and several could be open at once, up to the chip's eight hardware sockets (a listener that is serving a client occupies two of them). The ioLibrary version spread `httpServer_run()` across 4 hardware sockets instead. To serve concurrently here, hand each accepted fd to its own task rather than calling `serve_client()` inline.
 - **Requests handled:** `GET` and `HEAD` for `/` and `/index.html` (a query string is ignored). Anything else gets `404 Not Found`; other methods get `501 Not Implemented`. Requests whose headers exceed `HTTP_BUF_SIZE` are truncated.
 - **Session timeout:** `SO_RCVTIMEO` (`HTTP_RECV_TIMEOUT_MS`) bounds both `accept()` and `recv()`, so a task that never sees a client — or a client that connects and then goes silent — keeps looping instead of wedging.
 - **1 ms tick:** `sdkconfig.defaults` sets `CONFIG_FREERTOS_HZ=1000`. The TOE poll loops (`wiztoe_accept` / `wiztoe_recv`) yield in 1 ms steps and count those steps for `SO_RCVTIMEO`; at the IDF default of 100 Hz a 1 ms delay truncates to 0 ticks, which busy-waits and starves the idle task.

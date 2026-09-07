@@ -13,8 +13,10 @@
  *     session timeout is just SO_RCVTIMEO on the socket;
  *   - the httpParser/httpUtil content registry disappears too — this example
  *     serves exactly one page, so the request line is matched directly.
- * Every response says "Connection: close", so one request is one connection —
- * which is also what the WIZnet hardware sockets do naturally.
+ * Every response says "Connection: close", so one request is one connection.
+ * That is a choice this example makes, not a limit of the chip: accept() has
+ * BSD semantics on the TOE too, so the listener survives each connection and
+ * several can be open at once, up to the chip's eight hardware sockets.
  */
 #include <errno.h>
 #include <stdbool.h>
@@ -52,7 +54,12 @@ static void sock_set_rcvtimeo(const net_sock_ops_t *ops, int fd, uint32_t ms)
     ops->setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 }
 
-/* send() may take less than asked on either backend, so loop. */
+/* send() may take less than asked on either backend, so loop.
+ *
+ * EAGAIN/EWOULDBLOCK from a BLOCKING send() is not a failure and must not abort
+ * the response. On the TOE it means the chip has not yet acknowledged the
+ * previous transmission (SOCK_BUSY); on LwIP a socket carrying SO_SNDTIMEO
+ * reports an elapsed timeout the same way. Both mean "try again in a moment". */
 static bool send_all(const net_sock_ops_t *ops, int fd, const void *data, size_t len)
 {
     const uint8_t *p = (const uint8_t *)data;
@@ -60,10 +67,15 @@ static bool send_all(const net_sock_ops_t *ops, int fd, const void *data, size_t
 
     while (off < len) {
         int w = ops->send(fd, p + off, len - off, 0);
-        if (w <= 0) {
-            return false;
+        if (w > 0) {
+            off += (size_t)w;
+            continue;
         }
-        off += (size_t)w;
+        if (w < 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
+            vTaskDelay(1);
+            continue;
+        }
+        return false;                   /* 0 = peer gone, <0 = real error */
     }
     return true;
 }
@@ -218,8 +230,9 @@ static void http_serve(http_ctx_t *c, char *buf, int cap)
     int opt = 1;
     ops->setsockopt(lsock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     ops->setsockopt(lsock, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
-    /* Bounds accept() as well as recv(): on the TOE the accepted socket IS the
-     * listening one, and on LwIP the accepted socket inherits this. */
+    /* Bounds accept() as well as recv(). The TOE applies SO_RCVTIMEO to accept()
+     * too, and hands the value on to the accepted socket; on LwIP the accepted
+     * socket inherits it. Re-applied below either way, so neither is assumed. */
     sock_set_rcvtimeo(ops, lsock, HTTP_RECV_TIMEOUT_MS);
 
     struct sockaddr_in addr = {
@@ -246,9 +259,9 @@ static void http_serve(http_ctx_t *c, char *buf, int cap)
 
         serve_client(c, fd, buf, cap);
 
-        /* On the TOE this re-arms the listener (the accepted fd and the
-         * listening fd are the same hardware socket); on LwIP it just drops the
-         * connection. Either way the loop goes straight back to accept(). */
+        /* Closes the connection only; lsock keeps listening on both backends.
+         * On the TOE this also returns a hardware socket to the pool, which is
+         * what lets a listener still waiting for one arm itself. */
         ops->close(fd);
     }
 }
