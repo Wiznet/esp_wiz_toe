@@ -88,8 +88,15 @@ static uint8_t    g_tables_init;
 #define WIZTOE_DISCONNECT_TIMEOUT_MS 250u
 #endif
 
+/* toe_listener_reopen() returns this instead of an error when the chip has no
+ * source address yet: the socket cannot be opened, but nothing is wrong and the
+ * descriptor keeps its hardware socket so a later attempt can succeed. Callers
+ * test for < 0, so a deferral never looks like a failure. */
+#define WIZTOE_DEFER (1)
+
 static void toe_tcp_disconnect_bounded(int fd);
 static int  toe_listener_rearm(int fd);
+static int  toe_listener_reopen(int fd);
 
 /* Has `timeout_ms` of wall time passed since `started`?
  *
@@ -342,25 +349,46 @@ int wiztoe_listen(int fd, int backlog)
     if (!toe_fd_ready(fd) || g_desc[fd].is_udp)
         return -1;
 
-    uint8_t sn = toe_sn(fd);
-    if (socket(sn, Sn_MR_TCP, g_desc[fd].port, toe_open_flag(fd)) != sn)
-        return -1;
-    g_desc[fd].opened = 1;
-
-    if (listen(sn) != SOCK_OK)
-        return -1;
-
+    /* Succeeds even with no address yet: accept() opens the socket once one
+     * arrives. Failing here would be permanent for a server that only listens
+     * at start-up, and listening before an address exists is ordinary POSIX. */
     g_desc[fd].listening = 1;
+    if (toe_listener_reopen(fd) < 0)
+    {
+        g_desc[fd].listening = 0;
+        return -1;
+    }
     return 0;
+}
+
+/* Does the chip hold a source address yet?
+ *
+ * ioLibrary's socket() refuses to open a TCP socket while SIPR is zero
+ * (Ethernet/socket.c), so every listen() fails until an address exists. With
+ * DHCP that is not an error, just "not yet": the address arrives seconds after
+ * boot, long after a server has asked to listen. Read the same register
+ * ioLibrary reads, so the two never disagree. */
+static int toe_chip_has_ip(void)
+{
+    uint32_t sipr = 0;
+    getSIPR((uint8_t *)&sipr);
+    return sipr != 0;
 }
 
 /* Re-open the hardware socket this listener already owns and put it back in
  * LISTEN. ioLibrary's socket() issues CLOSE before OPEN, so this is valid from
  * ANY socket state, and listen() requires exactly the SOCK_INIT that socket()
- * leaves behind. */
+ * leaves behind. Returns WIZTOE_DEFER while the chip has no address; only -1
+ * means the socket is unusable. */
 static int toe_listener_reopen(int fd)
 {
     uint8_t sn = toe_sn(fd);
+
+    if (!toe_chip_has_ip())
+    {
+        g_desc[fd].opened = 0;
+        return WIZTOE_DEFER;
+    }
 
     if (socket(sn, Sn_MR_TCP, g_desc[fd].port, toe_open_flag(fd)) != sn)
         return -1;
