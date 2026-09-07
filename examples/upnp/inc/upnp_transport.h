@@ -61,7 +61,10 @@ int upnp_transport_http(const char *ip, uint16_t port, const char *request,
  * the SUBSCRIBE header and POSTs a notification.
  *
  * upnp_transport_listen() returns a listening fd, or -1.
- * upnp_transport_accept() returns a connected fd, 0 on timeout, or -1 on error.
+ * upnp_transport_accept() returns a connected fd, or -1 if nothing connected
+ * before the timeout (and on error -- the caller retries either way). It does
+ * NOT use 0 as the "nothing yet" sentinel: 0 is a perfectly good fd when
+ * LWIP_SOCKET_OFFSET is 0, and treating it as a miss would drop a connection.
  */
 int  upnp_transport_listen(uint16_t port);
 int  upnp_transport_accept(int listen_fd, uint32_t timeout_ms);

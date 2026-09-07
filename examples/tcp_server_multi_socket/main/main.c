@@ -9,9 +9,11 @@
  *   - Wi-Fi STA              on WIFI_MULTI_SOCKET_PORT_BASE + 0..COUNT-1
  * app_main itself just orchestrates: init both stacks, start both servers.
  *
- * One port per socket, as in the original WIZnet-PICO-C example: the WIZnet
- * chip cannot have several hardware sockets listening on the same port, so the
- * listeners are spread across consecutive ports.
+ * One port per socket, as in the original WIZnet-PICO-C example. The chip can
+ * in fact demultiplex several hardware sockets listening on one port by 4-tuple,
+ * so this is a presentation choice rather than a hardware limit; consecutive
+ * ports keep the log readable and match the original. See net_config.h for how
+ * many listeners the TOE can afford.
  *
  * The server logic lives in the backend-neutral engine multi_socket.c; each
  * interface supplies a socket vtable. Ethernet uses the plain lwIP BSD entry

@@ -75,6 +75,9 @@ idf_component_register(
         "include"
     PRIV_INCLUDE_DIRS
         # "port/backend/inc"
+        # wiznet_toe.h used to live here. It moved to include/ because a caller
+        # outside the component legitimately needs wiztoe_sn_of_fd() -- see the
+        # note in that header. What stays private is the transport/eth glue.
         "port/ioLibrary_Driver/inc"
     REQUIRES
         esp_driver_spi

@@ -40,7 +40,9 @@ static const char HTTP_OK[] = "HTTP/1.1 200 OK\r\n\r\n";
  * Wait for the IGD to call back with a notification.
  *
  * The original polled the chip's socket state machine in a switch and reopened
- * the socket by hand on SOCK_CLOSED. accept() covers all of that.
+ * the socket by hand on SOCK_CLOSED. accept() covers all of that: it has BSD
+ * semantics on both backends, so listen_fd stays listening across connections
+ * and each accepted fd is closed on its own.
  */
 static void listen_for_events(const char *name, uint32_t seconds)
 {
@@ -63,7 +65,7 @@ static void listen_for_events(const char *name, uint32_t seconds)
     while (waited < seconds) {
         int fd = upnp_transport_accept(listen_fd, 1000);
         waited++;
-        if (fd <= 0) {
+        if (fd < 0) {
             continue;                   /* nothing yet */
         }
 

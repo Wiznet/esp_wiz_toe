@@ -86,15 +86,25 @@ Leaving the placeholders in place is harmless: the Wi-Fi side simply keeps retry
 
 ### Server port configuration
 
-Each listener binds its own TCP port, `PORT_BASE + index`. The WIZnet chip cannot have several hardware sockets listening on the same port, so the listeners are spread across consecutive ports — this matches the original WIZnet-PICO-C example.
+Each listener binds its own TCP port, `PORT_BASE + index`. The chip can in fact demultiplex several hardware sockets listening on one port by 4-tuple, so one port per listener is a presentation choice rather than a hardware limit — it keeps the log readable and matches the original WIZnet-PICO-C example.
 
 ```cpp
-#define MULTI_SOCKET_PORT_BASE      5000   // Ethernet: 5000..5007
+#define MULTI_SOCKET_PORT_BASE      5000   // Ethernet: 5000..5003
 #define WIFI_MULTI_SOCKET_PORT_BASE 5100   // Wi-Fi:    5100..5107
-#define MULTI_SOCKET_COUNT          8
+#if CONFIG_WSM_DRIVER_SOCKET_WRAP
+#define MULTI_SOCKET_COUNT          4      // TOE: listener + connection, x4 = 8
+#else
+#define MULTI_SOCKET_COUNT          8      // software LwIP: no chip budget
+#endif
 ```
 
-`MULTI_SOCKET_COUNT` is 8 to match the chip's 8 hardware sockets. Each listener costs one task on **both** interfaces, so lower it if you are short on RAM. The Wi-Fi side needs one lwIP socket per listener plus one per accepted connection, which is why `sdkconfig.defaults` raises `CONFIG_LWIP_MAX_SOCKETS` to 16.
+### How many listeners the TOE can afford
+
+`accept()` has BSD semantics on the hardware sockets: it hands the established socket to the accepted connection and relocates the listener onto a free one. A listener that is serving a client therefore occupies **two** of the chip's eight sockets, and two of the driver's eight descriptors — the descriptors being the tighter limit, because `accept()` cannot allocate one for the new connection if every descriptor is already a listener.
+
+So eight listeners cannot accept anything at all: all eight descriptors are spent before the first client arrives and every `accept()` returns `EWOULDBLOCK` forever. **Four** is the largest count where every listener can serve a client at the same time (4 listeners + 4 connections = 8).
+
+This budget is TOE-only. With the esp_eth backend (`SOCKET_WRAP=0`) and on Wi-Fi these are ordinary LwIP sockets, so 8 still applies there. Each listener costs one task on **both** interfaces, so lower it if you are short on RAM. The Wi-Fi side needs one lwIP socket per listener plus one per accepted connection, which is why `sdkconfig.defaults` raises `CONFIG_LWIP_MAX_SOCKETS` to 16.
 
 ## Step 4: Build
 

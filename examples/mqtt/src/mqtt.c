@@ -124,7 +124,13 @@ static bool errno_is_timeout(void)
     return errno == EWOULDBLOCK || errno == EAGAIN;
 }
 
-/* send() may take less than asked on either backend, so loop. */
+/* send() may take less than asked on either backend, so loop.
+ *
+ * errno_is_timeout() covers the send side too: on the TOE a blocking send()
+ * reports -1/EWOULDBLOCK while the chip still has an unacknowledged
+ * transmission in flight (SOCK_BUSY), and LwIP does the same for an elapsed
+ * SO_SNDTIMEO. Neither is a broken connection, and treating them as one would
+ * tear down the session and reconnect over a condition that clears itself. */
 static bool send_all(mqtt_ctx_t *c, const void *data, size_t len)
 {
     const uint8_t *p = (const uint8_t *)data;
@@ -132,11 +138,16 @@ static bool send_all(mqtt_ctx_t *c, const void *data, size_t len)
 
     while (off < len) {
         int w = c->ops->send(c->fd, p + off, len - off, 0);
-        if (w <= 0) {
-            ESP_LOGW(TAG, "[%s] send failed: errno %d", c->name, errno);
-            return false;
+        if (w > 0) {
+            off += (size_t)w;
+            continue;
         }
-        off += (size_t)w;
+        if (w < 0 && errno_is_timeout()) {
+            vTaskDelay(1);
+            continue;
+        }
+        ESP_LOGW(TAG, "[%s] send failed: errno %d", c->name, errno);
+        return false;
     }
     c->last_tx_ms = now_ms();
     return true;

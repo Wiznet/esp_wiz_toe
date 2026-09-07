@@ -9,10 +9,13 @@
  * lwip_socket()/lwip_recv()/... (LWIP_COMPAT_SOCKETS=0). We intercept those
  * symbols with `-Wl,--wrap=lwip_*`, so the loopback source is unchanged. close()
  * on a socket fd routes through the VFS to lwip_close (vfs_lwip.c), which is
- * likewise redirected here — so close() re-arms the TOE listener as expected.
+ * likewise redirected here — so closing an accepted connection returns its
+ * hardware socket to the pool, which is what re-arms a listener that was left
+ * waiting for one.
  *
- * fd mapping: wiztoe fds are 0..N-1; we add LWIP_SOCKET_OFFSET so they land in
- * the VFS-routed range [LWIP_SOCKET_OFFSET, MAX_FDS) and close()/read()/write()
+ * fd mapping: wiztoe fds are DESCRIPTOR indices 0..N-1, not hardware socket
+ * numbers (see wiznet_toe.h); we add LWIP_SOCKET_OFFSET so they land in the
+ * VFS-routed range [LWIP_SOCKET_OFFSET, MAX_FDS) and close()/read()/write()
  * dispatch correctly. As in the Pico design, TOE owns ALL sockets in this
  * build, so every wrap routes unconditionally to wiztoe_* (no __real fallback).
  *
@@ -231,8 +234,10 @@ int __wrap_lwip_setsockopt(int s, int level, int optname, const void *optval, so
              * hardware socket -- which is a decision about the application's
              * traffic, not something a setsockopt() should do behind its back.
              * examples/udp_multicast performs the reopen itself; see the join
-             * seam there. Reporting it unsupported keeps a caller that expects
-             * ordinary LwIP IGMP from believing it got it. */
+             * seam there, and wiztoe_sn_of_fd() for the supported way to get
+             * from an fd to the chip socket such a reopen needs. Reporting it
+             * unsupported keeps a caller that expects ordinary LwIP IGMP from
+             * believing it got it. */
             errno = ENOPROTOOPT;
             return -1;
         }

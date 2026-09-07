@@ -64,11 +64,19 @@ typedef struct {
 
 /* ---- mbedTLS glue -------------------------------------------------------- */
 
+/* WANT_WRITE, not an error, when the send would have blocked: the TOE reports
+ * -1/EWOULDBLOCK while the chip has an unacknowledged transmission in flight
+ * (SOCK_BUSY), and LwIP does the same on an elapsed SO_SNDTIMEO. mbedTLS
+ * retries the record on WANT_WRITE; INTERNAL_ERROR would drop the session over
+ * a condition that clears itself in milliseconds. */
 static int bio_send(void *p, const unsigned char *buf, size_t len)
 {
     ssl_echo_ctx_t *c = (ssl_echo_ctx_t *)p;
     int n = c->ops->send(c->client_fd, buf, len, 0);
     if (n < 0) {
+        if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            return MBEDTLS_ERR_SSL_WANT_WRITE;
+        }
         return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
     }
     return n;

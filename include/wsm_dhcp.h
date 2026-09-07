@@ -40,6 +40,20 @@
 #ifndef WSM_DHCP_H
 #define WSM_DHCP_H
 
+#include "sdkconfig.h"
+
+/* The implementation is built only for TOE + socket wrap (see CMakeLists.txt):
+ * the engine's sockets are ordinary lwip_* calls that have to land on the TOE
+ * allocator. Including this header in any other configuration would compile and
+ * then fail at link with an undefined reference, which is a poor way to learn
+ * it. Say so here instead.
+ *
+ * With the esp_eth backend the interface is a real esp_netif, so use ESP-IDF's
+ * own DHCP client (esp_netif_dhcpc_start) and resolver rather than this one. */
+#if !CONFIG_WSM_DRIVER_SOCKET_WRAP
+#error "wsm_dhcp.h needs CONFIG_WSM_DRIVER_SOCKET_WRAP (TOE backend). " \n       "On the esp_eth backend use esp_netif_dhcpc_start() instead."
+#endif
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

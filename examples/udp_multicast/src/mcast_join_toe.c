@@ -11,14 +11,19 @@
  * acceptable: a join happens once at start-up, before any traffic is expected.
  *
  * This is the one place in the example that steps outside the socket API. It
- * needs the chip's socket number, and what it is handed is a BSD fd, so it
- * relies on the mapping the component's --wrap layer applies:
+ * needs the chip's socket number, and what it is handed is a BSD fd.
+ *
+ * It used to derive one from the other arithmetically:
  *
  *     fd == hardware socket number + LWIP_SOCKET_OFFSET
  *
- * That is an internal rule of wsm_driver, not a published contract. If it ever
- * changes this file keeps compiling and starts poking the wrong socket, so the
- * mapping is checked at runtime before anything is written -- see below.
+ * That was never a published contract, and it is no longer true. Since accept()
+ * gained BSD semantics a listener hands its hardware socket to the accepted
+ * connection and relocates onto a free one, so descriptors and chip sockets
+ * drift apart; a raw socket reserved for ioLibrary's DHCP_run() shifts them
+ * too. The subtraction would still compile and would quietly address someone
+ * else's socket. So the driver is asked instead, through wiztoe_sn_of_fd(),
+ * and the answer is still checked against the chip before anything is written.
  *
  * Two things this file must not do. It must not include any lwIP header --
  * ioLibrary's socket.h declares close() as int8_t(uint8_t) against POSIX's
@@ -39,7 +44,7 @@ static const char *TAG = "mcast_join";
 #if CONFIG_WSM_DRIVER_SOCKET_WRAP
 
 #include "wsm_driver/Ethernet/socket.h"    /* socket(), setSn_*, getSn_SR */
-#include "wizchip_conf.h"                   /* _WIZCHIP_SOCK_NUM_          */
+#include "wiznet_toe.h"                     /* wiztoe_sn_of_fd()           */
 
 /* Dotted quad to four bytes. Deliberately not inet_addr(): that would mean
  * including a network header, and both candidates are ruled out here. */
@@ -57,21 +62,21 @@ int mcast_join_toe(const void *ops, int fd, const char *group, uint16_t port)
 {
     (void)ops;                              /* reaches the chip directly */
 
-    int sn = fd - mcast_lwip_socket_offset();
-    if (sn < 0 || sn >= _WIZCHIP_SOCK_NUM_) {
-        ESP_LOGE(TAG, "fd %d maps to socket %d, which is out of range — the "
-                      "component's fd mapping is not what this expects", fd, sn);
+    /* fd is a BSD fd; the driver indexes its descriptors from 0. */
+    int sn = wiztoe_sn_of_fd(fd - mcast_lwip_socket_offset());
+    if (sn < 0) {
+        ESP_LOGE(TAG, "fd %d holds no hardware socket — cannot join a group on it",
+                 fd);
         return -1;
     }
 
-    /* Guard against the mapping having changed under us. bind() has just opened
-     * this socket for UDP, so if the number really is the chip socket behind
-     * `fd`, the chip agrees it is in SOCK_UDP. Anything else means we are about
-     * to reopen a socket belonging to someone else, and losing multicast is a
-     * far better outcome than that. */
+    /* Belt and braces. bind() has just opened this socket for UDP, so if sn really
+     * is the chip socket behind `fd`, the chip agrees it is in SOCK_UDP. Anything
+     * else means we are about to reopen a socket belonging to someone else, and
+     * losing multicast is a far better outcome than that. */
     if (getSn_SR((uint8_t)sn) != SOCK_UDP) {
         ESP_LOGE(TAG, "socket %d is not open for UDP (Sn_SR=0x%02x) — refusing "
-                      "to reopen it; the fd mapping looks wrong",
+                      "to reopen it; it is not the socket behind this fd",
                  sn, getSn_SR((uint8_t)sn));
         return -1;
     }
@@ -116,9 +121,9 @@ int mcast_join_toe(const void *ops, int fd, const char *group, uint16_t port)
 #else /* !CONFIG_WSM_DRIVER_SOCKET_WRAP */
 
 /*
- * With the esp_eth backend the wrap is off, so `fd` is a genuine LwIP socket
- * and there is no hardware socket behind it -- fd - LWIP_SOCKET_OFFSET would be
- * a number with no meaning. main.c picks mcast_join_bsd() in that build and
+ * With the esp_eth backend the wrap is off, so `fd` is a genuine LwIP socket and
+ * there is no hardware socket behind it at all (wiznet_toe.c is not even built
+ * in that configuration). main.c picks mcast_join_bsd() in that build and
  * never calls this; the stub exists so the link does not depend on that being
  * true, and says so loudly if it turns out not to be.
  */

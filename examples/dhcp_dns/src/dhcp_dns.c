@@ -16,6 +16,13 @@
  * Instead this file implements the client side of RFC 2131 (DHCP) and the A-record
  * half of RFC 1035 (DNS) directly on top of UDP sockets.
  *
+ * The component now ships the same engine as library code, in wsm_dhcp.h
+ * (wsm_dhcp_client_create/start/poll, wsm_dns_resolve) -- prefer that in an
+ * application. This example keeps its own copy on purpose: wsm_dhcp.c is built
+ * only for TOE + socket wrap, while this example is meant to run unchanged on
+ * the esp_eth backend and on Wi-Fi as well, which is exactly the comparison it
+ * exists to show.
+ *
  * Two things a socket cannot express stay in dhcp_dns_ops_t (see dhcp_dns.h):
  * prepare() supplies the chaddr / netif name, apply_lease() installs the result
  * into whichever stack owns the interface.

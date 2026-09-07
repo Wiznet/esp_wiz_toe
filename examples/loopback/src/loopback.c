@@ -29,6 +29,32 @@
 
 static const char *TAG = "loopback";
 
+/* Echo `len` bytes back, tolerating short writes.
+ *
+ * EAGAIN/EWOULDBLOCK from a BLOCKING send() is not an error: on the TOE it
+ * means the chip has not yet acknowledged the previous transmission
+ * (SOCK_BUSY), and on LwIP it is an elapsed SO_SNDTIMEO. Retrying is what both
+ * ask for; treating it as failure would drop the connection mid-echo.
+ *
+ * Returns true when every byte went out. */
+static bool send_all(const loopback_ops_t *ops, int fd, const uint8_t *buf, int len)
+{
+    int off = 0;
+    while (off < len) {
+        int w = ops->send(fd, buf + off, len - off, 0);
+        if (w > 0) {
+            off += w;
+            continue;
+        }
+        if (w < 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
+            vTaskDelay(1);
+            continue;
+        }
+        return false;                  /* 0 = peer gone, <0 = real error */
+    }
+    return true;
+}
+
 /* Standard lwIP BSD socket vtable (Ethernet). With WSM_DRIVER_SOCKET_WRAP=1 these
  * lwip_* symbols are --wrap-redirected to the W5500; with =0 they are software
  * LwIP over esp_eth. Correct either way, so no #if here. Exposed so app_main
@@ -82,13 +108,8 @@ static void loopback_tcp_server(const char *tag, const loopback_ops_t *ops,
             if (n <= 0) {
                 break;
             }
-            int off = 0;
-            while (off < n) {                 /* echo back, handle partial sends */
-                int w = ops->send(c, buf + off, n - off, 0);
-                if (w < 0) {
-                    break;
-                }
-                off += w;
+            if (!send_all(ops, c, buf, n)) {  /* echo back */
+                break;
             }
         }
         ESP_LOGI(TAG, "[%s] client disconnected", tag);
@@ -122,13 +143,8 @@ static void loopback_tcp_client(const char *tag, const loopback_ops_t *ops,
                 if (n <= 0) {
                     break;
                 }
-                int off = 0;
-                while (off < n) {
-                    int w = ops->send(s, buf + off, n - off, 0);
-                    if (w < 0) {
-                        break;
-                    }
-                    off += w;
+                if (!send_all(ops, s, buf, n)) {
+                    break;
                 }
             }
             ESP_LOGI(TAG, "[%s] connection closed", tag);

@@ -57,10 +57,17 @@ extern const multi_socket_ops_t wifi_multi_socket_ops;
  * one its own echo task. Ethernet and Wi-Fi are started with identical calls.
  *
  * The listeners are created by the supervisor (not by the echo tasks) on
- * purpose: the TOE fd allocator (wiztoe_socket) walks a plain global array with
- * no lock, so concurrent socket() calls on the same interface could hand out the
- * same hardware socket. Creating them one at a time from a single task removes
- * that race; afterwards each task only touches its own fd.
+ * purpose: the TOE allocator walks two plain global tables (descriptor -> chip
+ * socket, and its inverse) with no lock, so concurrent socket() calls on the
+ * same interface could hand out the same one. Creating them one at a time from
+ * a single task removes that race at start-up.
+ *
+ * It does not remove it afterwards, and this example is honest about that: each
+ * accept() takes a descriptor for the new connection and relocates its listener
+ * onto a free chip socket, so the echo tasks do touch those shared tables. The
+ * window is small and an echo server tolerates it, but a production application
+ * that accepts from several tasks at once wants the driver to lock them. See
+ * count in net_config.h for the socket budget this implies.
  *
  *   name        - short label; also the task-name prefix and log tag ("eth"/"wifi")
  *   ops         - socket vtable for this interface

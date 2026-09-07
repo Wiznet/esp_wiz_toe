@@ -10,8 +10,20 @@
  * socket()/recv()/... names. wiznet_toe.c is the only TU that includes the
  * ioLibrary headers.
  *
- * File descriptors map 1:1 to W5500 hardware socket numbers (fd == sn, before
- * LWIP_SOCKET_OFFSET is applied by the caller).
+ * PUBLIC header (include/), not because applications are expected to call this
+ * API -- ordinary code uses BSD sockets and the wrap routes them here -- but
+ * because the collision-free construction above is exactly what a caller sitting
+ * next to ioLibrary needs, and one such caller exists: a multicast join has to
+ * reopen its own chip socket, which no setsockopt can express. See
+ * wiztoe_sn_of_fd() and examples/udp_multicast.
+ *
+ * File descriptors are NOT hardware socket numbers. They were the same integer
+ * until accept() gained BSD semantics: a listener now hands its hardware socket
+ * to the accepted connection and relocates onto a free one, so the two spaces
+ * moved apart and stay apart (a reserved raw socket, or a listener temporarily
+ * without one, is enough to shift them even before any accept). The fd a caller
+ * holds is a descriptor index plus LWIP_SOCKET_OFFSET; code that genuinely needs
+ * the chip socket behind an fd must ask for it -- see wiztoe_sn_of_fd().
  */
 #ifndef _WIZNET_TOE_H_
 #define _WIZNET_TOE_H_
@@ -131,10 +143,23 @@ int  wiztoe_recvfrom(int fd, void *buf, size_t len, uint8_t ip[4], uint16_t *por
  * opens, so joining an already-bound socket means closing and reopening it --
  * a decision about the application's own traffic rather than something the
  * port layer should take on its behalf. examples/udp_multicast does the reopen
- * itself; see the join seam there. */
+ * itself; see the join seam there, and wiztoe_sn_of_fd() below for the only
+ * supported way to learn which chip socket an fd is sitting on. */
 
 /* helpers */
 int  wiztoe_is_udp(int fd);
+
+/* The hardware socket currently behind `fd`, or -1 if the descriptor is invalid
+ * or holds no socket (an unarmed listener does not).
+ *
+ * For the rare caller that must reach past the socket API to a chip register --
+ * examples/udp_multicast reopens its socket with Sn_MR_MULTI to join a group,
+ * which no setsockopt can express (see the note above). The value is valid only
+ * until the next call that can move sockets around (accept, close, listen), so
+ * read it immediately before use and never cache it.
+ *
+ * Pass a wiztoe fd, i.e. a BSD fd with LWIP_SOCKET_OFFSET already subtracted. */
+int  wiztoe_sn_of_fd(int fd);
 void wiztoe_peer(int fd, uint8_t ip[4], uint16_t *port);
 void wiztoe_getsockname(int fd, uint8_t ip[4], uint16_t *port);
 void wiztoe_local_ip(uint8_t ip[4]);

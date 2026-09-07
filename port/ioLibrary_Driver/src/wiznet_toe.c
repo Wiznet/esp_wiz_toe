@@ -278,6 +278,17 @@ int wiztoe_is_udp(int fd)
     return toe_fd_valid(fd) && g_desc[fd].is_udp;
 }
 
+/* The one sanctioned way out of the descriptor space. Everything inside this
+ * file uses toe_sn(); this exists so a caller that must reach a chip register
+ * does not have to guess the mapping, which stopped being fd == sn when accept()
+ * started relocating listeners. */
+int wiztoe_sn_of_fd(int fd)
+{
+    if (!toe_fd_valid(fd))
+        return -1;
+    return g_desc[fd].sn;          /* -1 when the descriptor holds no socket */
+}
+
 int wiztoe_set_nonblocking(int fd, int enable)
 {
     if (!toe_fd_valid(fd))
