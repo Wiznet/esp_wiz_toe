@@ -1,5 +1,5 @@
 name: wsm_driver
-version: "1.1.0"
+version: "1.1.1"
 description: "ESP-IDF SPI/QSPI port layer for using WIZnet W5500/W6300 with the official ioLibrary"
 license: "MIT"
 repository: "https://github.com/Wiznet/wsm_driver"
